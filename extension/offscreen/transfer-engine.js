@@ -38,6 +38,8 @@ import { MSG, WIRE } from '../shared/message-types.js';
 import { WsClient } from './ws-client.js';
 import { RELAY_URL } from '../shared/constants.js';
 import { TransferManager } from './transfer-manager.js';
+import { loadAllCheckpoints, saveCheckpoint, clearCheckpoint, shouldCheckpoint } from './checkpoint.js';
+import { WebRTCManager } from './webrtc-manager.js';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -93,6 +95,18 @@ let pendingPairing = null;
  * @type {TransferManager | null}
  */
 let transferManager = null;
+
+/**
+ * WebRTC peer-connection manager.  Handles SDP signaling and ICE negotiation
+ * for all paired devices, providing a direct P2P DataChannel path that bypasses
+ * the relay once connected.
+ *
+ * Null until connectRelay() completes — we need an authenticated wsClient
+ * before we can forward trickle ICE candidates through the relay.
+ *
+ * @type {WebRTCManager | null}
+ */
+let webrtcManager = null;
 
 // ---------------------------------------------------------------------------
 // Startup
@@ -281,27 +295,95 @@ async function connectRelay() {
     updatePresence(msg.deviceId, false);
   });
 
-  // ── Incoming pairing request ────────────────────────────────────────────
-  // An Android peer that scanned our QR code sends its public keys inside an
-  // SDP_OFFER frame during Phase D.  Phase H will repurpose SDP_OFFER for
-  // WebRTC signalling; until then we distinguish the two by the absence of an
-  // `sdp` field in a pairing message.
+  // ── Incoming pairing request or WebRTC SDP offer ────────────────────────
+  // SDP_OFFER frames serve a dual purpose during the transition period:
+  //   - A pairing request (Phase D) carries `ed25519Pk` and `x25519Pk` fields.
+  //   - A WebRTC offer (Phase I) carries an `sdp` string field.
+  // We distinguish the two by checking for the `sdp` field first.
   //
-  // TODO(Phase H): replace this dual-purpose handler with a dedicated
-  // PAIRING_REQUEST wire type once the Android companion app is updated.
+  // TODO: replace with a dedicated PAIRING_REQUEST wire type once the Android
+  // companion app is updated to Phase I.
   wsClient.on(WIRE.SDP_OFFER, async (msg) => {
-    // Distinguish a pairing request (carries peer public keys) from a WebRTC
-    // SDP offer (carries `sdp` field).  The latter is handled in Phase H.
-    if (msg.ed25519Pk && msg.x25519Pk) {
+    if (msg.sdp) {
+      // ── WebRTC SDP offer from a remote peer ─────────────────────────────
+      if (!webrtcManager) return;
+      try {
+        const answer = await webrtcManager.handleOffer(msg.fromDeviceId, msg.sdp);
+        // Send the SDP answer back via relay so the remote peer can complete
+        // the DTLS handshake.
+        wsClient.send({
+          type:           WIRE.SDP_ANSWER,
+          targetDeviceId: msg.fromDeviceId,
+          rendezvousId:   pairedDevices.find((d) => d.deviceId === msg.fromDeviceId)?.rendezvousId ?? '',
+          sdp:            answer.sdp,
+        });
+      } catch (err) {
+        console.error('[Beam] WebRTC offer handling failed:', err);
+      }
+    } else if (msg.ed25519Pk && msg.x25519Pk) {
+      // ── Pairing request from an Android peer (Phase D) ──────────────────
       await handlePairRequest(msg);
     }
-    // Otherwise silently ignore — WebRTC handling not yet implemented.
+    // Unknown SDP_OFFER shape — silently ignore to remain forward-compatible.
+  });
+
+  // ── Incoming WebRTC SDP answer ──────────────────────────────────────────
+  // The remote peer sent their answer after we sent them an offer.  Apply it
+  // to complete the offer/answer exchange and start ICE connectivity checks.
+  wsClient.on(WIRE.SDP_ANSWER, async (msg) => {
+    if (!webrtcManager || !msg.sdp) return;
+    try {
+      await webrtcManager.handleAnswer(msg.fromDeviceId, msg.sdp);
+    } catch (err) {
+      console.error('[Beam] WebRTC answer handling failed:', err);
+    }
+  });
+
+  // ── Incoming trickle ICE candidate ──────────────────────────────────────
+  // Both the offer and answer sides send trickled candidates continuously
+  // during ICE gathering.  Add each one to the RTCPeerConnection so the
+  // browser can attempt connectivity checks.
+  wsClient.on(WIRE.ICE_CANDIDATE, async (msg) => {
+    if (!webrtcManager || !msg.candidate) return;
+    try {
+      await webrtcManager.handleIceCandidate(msg.fromDeviceId, msg.candidate);
+    } catch (err) {
+      console.error('[Beam] ICE candidate handling failed:', err);
+    }
   });
 
   // ── Instantiate TransferManager ────────────────────────────────────────
   // Created here (after auth completes) so it can immediately use the
   // authenticated wsClient for outbound transfers.
   transferManager = new TransferManager(wsClient, deviceKeys, pairedDevices);
+
+  // Inject crash-recovery checkpoint callbacks.  Using injection rather than
+  // a direct import inside transfer-manager.js keeps that module free of
+  // chrome.storage.session dependencies (which would break Node.js unit tests).
+  transferManager.setCheckpointCallbacks({
+    save:   saveCheckpoint,
+    clear:  clearCheckpoint,
+    should: shouldCheckpoint,
+  });
+
+  // ── Instantiate WebRTCManager ──────────────────────────────────────────
+  webrtcManager = new WebRTCManager(wsClient);
+
+  // Wire the rendezvous-ID lookup so that ICE candidates sent via the relay
+  // are correctly routed to the peer's rendezvous room.
+  webrtcManager.setRendezvousLookup((peerId) => {
+    const device = pairedDevices.find((d) => d.deviceId === peerId);
+    return device?.rendezvousId ?? '';
+  });
+
+  // When a P2P channel opens, attempt a path upgrade for active transfers.
+  // The TransferManager currently routes everything through the relay; a future
+  // enhancement will switch in-progress transfers to the DataChannel path.
+  webrtcManager.onConnected((peerId) => {
+    console.log(`[Beam] P2P channel connected to ${peerId} — path upgrade available`);
+    // TODO(Phase I follow-up): redirect in-flight transfer chunks from relay
+    // to the DataChannel for the affected transfer(s).
+  });
 
   // ── Incoming relay data frames ──────────────────────────────────────────
   // The relay server routes encrypted frames from peers via WIRE.RELAY_DATA.
@@ -352,6 +434,101 @@ async function connectRelay() {
       transferManager.handleChunk(data);
     }
   });
+
+  // ── Crash recovery: resume interrupted transfers ────────────────────────
+  // Load all non-expired checkpoints from session storage.  Each checkpoint
+  // records the last confirmed chunk offset for a transfer that was running
+  // when the offscreen document was closed or the network was interrupted.
+  //
+  // On reconnect we log the pending resumptions so that when the relevant peer
+  // comes online (via PEER_ONLINE presence event) the transfer engine can send
+  // a resume signal with the correct chunkOffset rather than restarting from 0.
+  //
+  // Note: actual resume-request wire messages will be added when the Android
+  // companion app implements the corresponding protocol handler.  For now the
+  // checkpoint data is preserved in memory and the console log surfaces it for
+  // diagnostics.
+  try {
+    const checkpoints = await loadAllCheckpoints();
+    const entries = Object.entries(checkpoints);
+
+    if (entries.length > 0) {
+      console.log(`[Beam] Found ${entries.length} interrupted transfer(s) to resume.`);
+      for (const [id, cp] of entries) {
+        console.log(
+          `[Beam] Resuming transfer ${id} from chunk ${cp.chunkOffset} ` +
+          `(peer: ${cp.peerId}, direction: ${cp.direction})`,
+        );
+        // When the peer comes online the PEER_ONLINE handler can use this data
+        // to send a resume-request frame.  The checkpoint remains in session
+        // storage until the transfer completes or is cancelled.
+      }
+    }
+  } catch (err) {
+    // Checkpoint loading is non-fatal; log and continue.
+    console.warn('[Beam] Failed to load transfer checkpoints:', err);
+  }
+
+  // ── Network change detection → ICE restart ─────────────────────────────
+  // When the device's network path changes (e.g. Wi-Fi to cellular handoff,
+  // or a brief drop causing the browser to go offline), active WebRTC
+  // connections may lose their ICE candidate pairs.  We trigger an ICE restart
+  // for every connected peer so the browser re-gathers candidates over the
+  // new interface.  During the re-negotiation the relay path is used as a
+  // bridge so in-flight transfers do not stall.
+
+  /**
+   * Handle a network change event by restarting ICE for all connected peers.
+   * The relay WebSocket will reconnect automatically via WsClient's back-off
+   * scheduler; we only need to handle the WebRTC layer here.
+   *
+   * @param {string} reason - Human-readable event name for logging.
+   */
+  async function handleNetworkChange(reason) {
+    if (!webrtcManager) return;
+    console.log(`[Beam] Network change detected (${reason}) — triggering ICE restart`);
+
+    for (const peerId of webrtcManager.connections.keys()) {
+      try {
+        const offer = await webrtcManager.restartIce(peerId);
+        if (!offer) continue;
+
+        // Relay the new ICE-restart offer to the peer so they can respond
+        // with a new answer and the fresh candidate set.
+        const device = pairedDevices.find((d) => d.deviceId === peerId);
+        wsClient.send({
+          type:           WIRE.SDP_OFFER,
+          targetDeviceId: peerId,
+          rendezvousId:   device?.rendezvousId ?? '',
+          sdp:            offer.sdp,
+        });
+      } catch (err) {
+        console.warn(`[Beam] ICE restart failed for peer ${peerId}:`, err);
+      }
+    }
+  }
+
+  // Network Information API — fires when connection type changes (e.g. 4G → Wi-Fi).
+  // This API is not available in all browsers; guard with optional chaining.
+  if (typeof navigator !== 'undefined' && navigator.connection) {
+    navigator.connection.addEventListener('change', () => {
+      handleNetworkChange('navigator.connection change').catch(console.error);
+    });
+  }
+
+  // Standard online/offline events — fired by the browser when the device
+  // gains or loses internet connectivity.
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => {
+      // Coming back online: restart ICE to pick up fresh local candidates.
+      handleNetworkChange('online').catch(console.error);
+    });
+
+    window.addEventListener('offline', () => {
+      // Going offline: log only — ICE restart will be triggered when back online.
+      console.log('[Beam] Network offline — relay will reconnect when online resumes');
+    });
+  }
 }
 
 /**

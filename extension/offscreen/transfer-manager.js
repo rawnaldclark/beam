@@ -491,6 +491,41 @@ export class TransferManager {
      * @type {FlowController}
      */
     this._flowController = new FlowController('relay');
+
+    /**
+     * Checkpoint callbacks injected by transfer-engine.js.
+     *
+     * Using injection rather than a direct import keeps transfer-manager.js
+     * free of chrome.storage.session dependencies, which allows the Node.js
+     * unit tests to run without a browser environment stub.
+     *
+     * @type {{
+     *   save:   ((transfer: Transfer) => Promise<void>) | null,
+     *   clear:  ((transferId: string) => Promise<void>) | null,
+     *   should: ((chunksProcessed: number) => boolean) | null,
+     * }}
+     */
+    this._checkpoint = { save: null, clear: null, should: null };
+  }
+
+  // ── Checkpoint injection ────────────────────────────────────────────────
+
+  /**
+   * Inject crash-recovery checkpoint callbacks from the offscreen startup code.
+   *
+   * All three callbacks must be provided together; omitting any will leave the
+   * slot as null and that checkpoint operation will be silently skipped.
+   *
+   * @param {{
+   *   save:   (transfer: object) => Promise<void>,
+   *   clear:  (transferId: string) => Promise<void>,
+   *   should: (chunksProcessed: number) => boolean,
+   * }} callbacks
+   */
+  setCheckpointCallbacks({ save, clear, should }) {
+    this._checkpoint.save   = save   ?? null;
+    this._checkpoint.clear  = clear  ?? null;
+    this._checkpoint.should = should ?? null;
   }
 
   // ── Public API: sending ─────────────────────────────────────────────────
@@ -592,6 +627,14 @@ export class TransferManager {
     // (Full hash verification is done on the receiver side; sender trusts
     // the encryption + transfer-complete wire message.)
     transfer.state = STATE.COMPLETE;
+
+    // Remove the resumption checkpoint now that the transfer is done — no
+    // need to keep the slot in session storage any longer.
+    if (this._checkpoint.clear) {
+      this._checkpoint.clear(transferId).catch((err) => {
+        console.warn('[TransferManager] clearCheckpoint failed (send complete):', err);
+      });
+    }
 
     // Notify the service worker so it can update the badge and show a notification.
     this._notifySW(MSG.TRANSFER_COMPLETE, {
@@ -807,6 +850,19 @@ export class TransferManager {
       totalBytes:       transfer.fileSize,
       speedBps:         _estimateSpeed(transfer),
     });
+
+    // ── 7a. Persist a receive-side resumption checkpoint every N chunks ───
+    // Allows a reconnecting sender to seek to the receiver's last known position
+    // rather than retransmitting from chunk 0.
+    if (
+      this._checkpoint.should &&
+      this._checkpoint.save &&
+      this._checkpoint.should(transfer.chunksReceived)
+    ) {
+      this._checkpoint.save(transfer).catch((err) => {
+        console.warn('[TransferManager] saveCheckpoint (receive) failed:', err);
+      });
+    }
 
     // ── 8. Final chunk: verify integrity ─────────────────────────────────
     if (isFinal || transfer.chunksReceived === transfer.totalChunks) {
@@ -1043,6 +1099,21 @@ export class TransferManager {
           speedBps:        _estimateSpeed(transfer),
         });
       }
+
+      // Persist a resumption checkpoint every CHECKPOINT_INTERVAL_CHUNKS sent
+      // chunks so that a crash or disconnect can resume from the last confirmed
+      // position rather than retransmitting from the beginning.
+      if (
+        this._checkpoint.should &&
+        this._checkpoint.save &&
+        this._checkpoint.should(transfer.chunksSent)
+      ) {
+        this._checkpoint.save(transfer).catch((err) => {
+          // Checkpoint failure is non-fatal: the transfer continues; the worst
+          // outcome of a lost checkpoint is retransmission from an earlier offset.
+          console.warn('[TransferManager] saveCheckpoint failed:', err);
+        });
+      }
     }
   }
 
@@ -1072,6 +1143,15 @@ export class TransferManager {
 
     if (receivedHex !== transfer.sha256) {
       transfer.state = STATE.FAILED;
+
+      // Clear the checkpoint on final failure — the transfer cannot be resumed
+      // from a corrupted state, so the slot should be freed.
+      if (this._checkpoint.clear) {
+        this._checkpoint.clear(transfer.id).catch((err) => {
+          console.warn('[TransferManager] clearCheckpoint failed (hash mismatch):', err);
+        });
+      }
+
       this._notifySW(MSG.TRANSFER_FAILED, {
         transferId: transfer.id,
         reason:     `Hash mismatch: expected ${transfer.sha256}, got ${receivedHex}`,
@@ -1080,6 +1160,14 @@ export class TransferManager {
     }
 
     transfer.state = STATE.COMPLETE;
+
+    // Remove the resumption checkpoint now that the transfer completed
+    // successfully — the assembled file is about to be handed to the SW.
+    if (this._checkpoint.clear) {
+      this._checkpoint.clear(transfer.id).catch((err) => {
+        console.warn('[TransferManager] clearCheckpoint failed (receive complete):', err);
+      });
+    }
 
     // Persist the assembled file.  In a real browser context this would trigger
     // a download via chrome.downloads or a Blob URL.  For now we emit a message
