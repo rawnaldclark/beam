@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=360">
+  <title>Beam</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ===== Header ===== -->
+    <header>
+      <div class="logo">
+        <span class="logo-icon" aria-hidden="true">&#9889;</span>
+        <span class="logo-text">Beam</span>
+      </div>
+      <div class="header-actions">
+        <button id="btn-pair"     class="icon-btn" title="Pair new device"
+                aria-label="Pair new device">&#43;</button>
+        <button id="btn-settings" class="icon-btn" title="Settings"
+                aria-label="Settings">&#9881;</button>
+      </div>
+    </header>
+
+    <!-- ===== Toast notification strip ===== -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <!-- ====================================================== -->
+    <!--  VIEW: Pairing — QR code + PIN                         -->
+    <!-- ====================================================== -->
+    <div id="view-pairing" class="view hidden" role="region" aria-label="Pair a device">
+      <div class="view-body">
+        <h3 class="view-title">Pair a Device</h3>
+
+        <!-- QR code renders into this element -->
+        <div id="qr-container" class="qr-container" aria-label="QR code">
+          <!-- Placeholder shown until QR data arrives -->
+          <div id="qr-placeholder" class="qr-placeholder">
+            <div class="qr-spinner"></div>
+            <span>Generating&hellip;</span>
+          </div>
+        </div>
+
+        <p class="subtitle">Scan with Beam on your phone</p>
+
+        <div class="pin-display">
+          <span class="pin-label">Or enter PIN:</span>
+          <span id="pin-code"  class="pin-code" aria-label="Pairing PIN"></span>
+          <span id="pin-timer" class="pin-timer" aria-label="PIN expires in"></span>
+        </div>
+
+        <button id="btn-pairing-cancel" class="btn secondary full-width">Cancel</button>
+      </div>
+    </div>
+
+    <!-- ====================================================== -->
+    <!--  VIEW: SAS emoji verification                          -->
+    <!-- ====================================================== -->
+    <div id="view-sas" class="view hidden" role="region" aria-label="Verify connection">
+      <div class="view-body">
+        <h3 class="view-title">Verify Connection</h3>
+        <p class="view-desc">Do these emoji match on your other device?</p>
+
+        <div id="sas-emojis" class="sas-display" aria-label="Security emoji"></div>
+
+        <div class="btn-group">
+          <button id="sas-cancel"  class="btn secondary">Cancel</button>
+          <button id="sas-confirm" class="btn primary">They Match</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====================================================== -->
+    <!--  VIEW: Device naming                                    -->
+    <!-- ====================================================== -->
+    <div id="view-naming" class="view hidden" role="region" aria-label="Name this device">
+      <div class="view-body">
+        <h3 class="view-title">Name This Device</h3>
+        <!-- createNamingForm() injects its markup here -->
+        <div id="naming-container"></div>
+      </div>
+    </div>
+
+    <!-- ====================================================== -->
+    <!--  VIEW: Main — device list, drop zone, history          -->
+    <!-- ====================================================== -->
+    <div id="view-main" class="view" role="main">
+
+      <!-- Device list -->
+      <div id="device-list" class="device-list" aria-label="Paired devices"></div>
+
+      <!-- Empty state (shown when no devices paired) -->
+      <div id="empty-state" class="empty-state hidden" aria-live="polite">
+        <div class="empty-icon" aria-hidden="true">&#128225;</div>
+        <h3>Pair Your First Device</h3>
+        <p>Scan a QR code to connect your devices instantly.</p>
+        <button id="btn-pair-first" class="btn primary">Pair Device</button>
+      </div>
+
+      <!-- Drop zone for file transfers -->
+      <div id="drop-zone" class="drop-zone" role="button" tabindex="0"
+           aria-label="Drop files here or click to browse">
+        <span class="drop-icon" aria-hidden="true">&#128190;</span>
+        <span class="drop-label">Drop files here or click to browse</span>
+        <input type="file" id="file-input" multiple hidden aria-hidden="true">
+      </div>
+
+      <!-- Quick action buttons -->
+      <div class="quick-actions" role="group" aria-label="Quick send actions">
+        <button id="btn-clipboard"   class="quick-btn" title="Send clipboard contents"
+                aria-label="Send clipboard">
+          <span aria-hidden="true">&#128203;</span> Clipboard
+        </button>
+        <button id="btn-screenshot"  class="quick-btn" title="Send screenshot of current tab"
+                aria-label="Send screenshot">
+          <span aria-hidden="true">&#128248;</span> Screen
+        </button>
+        <button id="btn-tab-url"     class="quick-btn" title="Send URL of current tab"
+                aria-label="Send tab URL">
+          <span aria-hidden="true">&#128279;</span> Tab URL
+        </button>
+      </div>
+
+      <!-- Active transfers -->
+      <div id="active-transfers" class="active-section" aria-live="polite" aria-label="Active transfers">
+        <!-- Injected by JS when transfers are in progress -->
+      </div>
+
+      <!-- Recent transfers history -->
+      <div id="recent-transfers" class="recent-section">
+        <h4 class="section-title">Recent</h4>
+        <div id="transfer-list" aria-label="Transfer history"></div>
+      </div>
+
+      <!-- Clipboard history -->
+      <div id="clipboard-section" class="recent-section">
+        <h4 class="section-title">
+          Clipboard History
+          <span id="clipboard-count" class="badge"></span>
+        </h4>
+        <div id="clipboard-list" aria-label="Clipboard history"></div>
+      </div>
+
+    </div><!-- /view-main -->
+
+  </div><!-- /app -->
+
+  <!--
+    qr.min.js exposes the global `qrcode` constructor used by pairing.js.
+    Loading it as a classic (non-module) script so `qrcode` lands on window.
+  -->
+  <script src="../lib/qr.min.js"></script>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
