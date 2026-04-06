@@ -1,6 +1,7 @@
 package com.zaptransfer.android.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -8,6 +9,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.zaptransfer.android.ui.clipboard.ClipboardHistoryScreen
+import com.zaptransfer.android.ui.pairing.DeviceNamingScreen
+import com.zaptransfer.android.ui.pairing.PairingViewModel
+import com.zaptransfer.android.ui.pairing.PinEntryScreen
+import com.zaptransfer.android.ui.pairing.QrScannerScreen
+import com.zaptransfer.android.ui.pairing.SasVerificationScreen
 import com.zaptransfer.android.ui.settings.SettingsScreen
 import com.zaptransfer.android.ui.transfer.TransferCompleteSheet
 import com.zaptransfer.android.ui.transfer.TransferProgressScreen
@@ -34,17 +40,18 @@ const val ROUTE_PAIRING_PIN = "pairing/pin"
 
 /**
  * Pairing step 2: SAS emoji verification.
- * Argument: [ARG_SESSION_ID] — the in-flight pairing session ID used to look up
- * the derived SAS bytes in the PairingViewModel.
+ * No nav argument — the in-flight session state is held in PairingViewModel.Verifying,
+ * which is scoped to the ROUTE_PAIRING_SCAN back stack entry and shared across all
+ * pairing screens.
  */
-const val ROUTE_PAIRING_VERIFY = "pairing/verify/{$ARG_SESSION_ID}"
+const val ROUTE_PAIRING_VERIFY = "pairing/verify"
 
 /**
  * Pairing step 3: name the newly paired device and pick its icon.
- * Argument: [ARG_DEVICE_ID] — the remote device's stable ID, used to pre-populate
- * the name field from the peer's self-declared name.
+ * No nav argument — the deviceId is held in PairingViewModel.Naming state, accessed
+ * via the shared ViewModel scoped to the ROUTE_PAIRING_SCAN back stack entry.
  */
-const val ROUTE_PAIRING_NAME = "pairing/name/{$ARG_DEVICE_ID}"
+const val ROUTE_PAIRING_NAME = "pairing/name"
 
 /**
  * Transfer in-progress screen.
@@ -73,11 +80,8 @@ const val ROUTE_CLIPBOARD = "clipboard"
  * The [NavHostController] is owned by this composable and shared downward
  * only as a parameter to screens that need to navigate — not via CompositionLocal.
  *
- * Screen implementations are stub placeholders in Phase A. Each `TODO` comment
- * marks the Phase that fills in the real composable.
- *
  * Navigation rules:
- *  - Pairing flow is linear: scan/pin → verify/{sessionId} → name/{deviceId} → hub.
+ *  - Pairing flow is linear: scan/pin → verify → name → hub.
  *  - Transfer routes are pushed onto the back stack over the hub.
  *  - Settings and clipboard are top-level destinations accessible from the hub app bar.
  *
@@ -106,68 +110,62 @@ fun BeamNavGraph(
         }
 
         // ── Pairing: QR scanner ──────────────────────────────────────────────
-        composable(ROUTE_PAIRING_SCAN) {
-            // Phase D (Task 11): replace with QrScannerScreen
-            ScreenPlaceholder(
-                title = "Scan QR Code",
+        // The PairingViewModel is scoped to this back stack entry so that all
+        // downstream pairing screens (PIN, verify, naming) share the same instance
+        // by retrieving it via navController.getBackStackEntry(ROUTE_PAIRING_SCAN).
+        composable(ROUTE_PAIRING_SCAN) { entry ->
+            val viewModel: PairingViewModel = hiltViewModel(entry)
+            QrScannerScreen(
+                viewModel = viewModel,
+                onNavigateToVerify = { navController.navigate(ROUTE_PAIRING_VERIFY) },
+                onNavigateToPin = { navController.navigate(ROUTE_PAIRING_PIN) },
                 onBack = { navController.popBackStack() },
-                onNext = { sessionId ->
-                    navController.navigate("pairing/verify/$sessionId")
-                },
             )
         }
 
         // ── Pairing: PIN entry ───────────────────────────────────────────────
+        // Shares PairingViewModel scoped to the scan entry so state is continuous.
         composable(ROUTE_PAIRING_PIN) {
-            // Phase D (Task 12): replace with PinEntryScreen
-            ScreenPlaceholder(
-                title = "Enter 8-Digit PIN",
+            val scanEntry = navController.getBackStackEntry(ROUTE_PAIRING_SCAN)
+            val viewModel: PairingViewModel = hiltViewModel(scanEntry)
+            PinEntryScreen(
+                viewModel = viewModel,
+                onNavigateToVerify = { navController.navigate(ROUTE_PAIRING_VERIFY) },
                 onBack = { navController.popBackStack() },
-                onNext = { sessionId ->
-                    navController.navigate("pairing/verify/$sessionId")
-                },
             )
         }
 
         // ── Pairing: SAS verification ────────────────────────────────────────
-        composable(
-            route = ROUTE_PAIRING_VERIFY,
-            arguments = listOf(
-                navArgument(ARG_SESSION_ID) { type = NavType.StringType }
-            ),
-        ) { backStackEntry ->
-            val sessionId = backStackEntry.arguments?.getString(ARG_SESSION_ID) ?: return@composable
-            // Phase D (Task 14): replace with SasVerificationScreen(sessionId)
-            ScreenPlaceholder(
-                title = "Verify: $sessionId",
-                onBack = { navController.popBackStack() },
-                onNext = { deviceId ->
-                    navController.navigate("pairing/name/$deviceId") {
+        // No nav arguments needed — peerPayload is held in PairingViewModel.Verifying state.
+        composable(ROUTE_PAIRING_VERIFY) {
+            val scanEntry = navController.getBackStackEntry(ROUTE_PAIRING_SCAN)
+            val viewModel: PairingViewModel = hiltViewModel(scanEntry)
+            SasVerificationScreen(
+                viewModel = viewModel,
+                onNavigateToNaming = {
+                    navController.navigate(ROUTE_PAIRING_NAME) {
                         // Pop verify off the back stack — user cannot go back to SAS after naming
                         popUpTo(ROUTE_PAIRING_SCAN) { inclusive = false }
                     }
                 },
+                onBack = { navController.popBackStack() },
             )
         }
 
         // ── Pairing: device naming ───────────────────────────────────────────
-        composable(
-            route = ROUTE_PAIRING_NAME,
-            arguments = listOf(
-                navArgument(ARG_DEVICE_ID) { type = NavType.StringType }
-            ),
-        ) { backStackEntry ->
-            val deviceId = backStackEntry.arguments?.getString(ARG_DEVICE_ID) ?: return@composable
-            // Phase D (Task 15): replace with DeviceNamingScreen(deviceId)
-            ScreenPlaceholder(
-                title = "Name Device: $deviceId",
-                onBack = { navController.popBackStack() },
-                onNext = {
+        // No nav arguments needed — deviceId is held in PairingViewModel.Naming state.
+        composable(ROUTE_PAIRING_NAME) {
+            val scanEntry = navController.getBackStackEntry(ROUTE_PAIRING_SCAN)
+            val viewModel: PairingViewModel = hiltViewModel(scanEntry)
+            DeviceNamingScreen(
+                viewModel = viewModel,
+                onNavigateToHub = {
                     // After naming, clear the entire pairing back stack and return to hub
                     navController.navigate(ROUTE_DEVICE_HUB) {
                         popUpTo(ROUTE_DEVICE_HUB) { inclusive = false }
                     }
                 },
+                onBack = { navController.popBackStack() },
             )
         }
 
@@ -230,24 +228,3 @@ fun BeamNavGraph(
     }
 }
 
-// ─── Phase-A placeholder composables ─────────────────────────────────────────
-// Minimal stubs so the app compiles and the nav graph is exercisable in isolation.
-// These are replaced one-by-one in later phases — do NOT add real UI logic here.
-
-@Composable
-private fun DeviceHubPlaceholder(
-    onPairDevice: () -> Unit,
-    onSettings: () -> Unit,
-    onClipboard: () -> Unit,
-) {
-    androidx.compose.material3.Text("Device Hub — Phase E placeholder")
-}
-
-@Composable
-private fun ScreenPlaceholder(
-    title: String,
-    onBack: () -> Unit,
-    onNext: (String) -> Unit,
-) {
-    androidx.compose.material3.Text("$title — placeholder")
-}
