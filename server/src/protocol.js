@@ -1,3 +1,212 @@
-// protocol.js — Message type constants and validation for ZapTransfer relay
-export const MSG = {};
-export function validate(msg) { return { valid: false, error: 'not implemented' }; }
+/**
+ * protocol.js — Message type constants and validation for ZapTransfer relay.
+ *
+ * All WebSocket messages are JSON objects with a required `type` field drawn
+ * from the MSG constants. The validate() function provides a single entry
+ * point for validating inbound messages before any handler logic runs.
+ */
+
+// ---------------------------------------------------------------------------
+// Size limits (bytes, measured against JSON.stringify output)
+// ---------------------------------------------------------------------------
+
+/** Maximum JSON-encoded size for text messages. Enforced in validate(). */
+export const MAX_TEXT_SIZE = 64 * 1024; // 64 KB
+
+/** Maximum size for binary relay frames. Enforced by the relay module. */
+export const MAX_BINARY_SIZE = 256 * 1024; // 256 KB
+
+// ---------------------------------------------------------------------------
+// Message type constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical string constants for every protocol message type.
+ * Using the MSG object (instead of bare strings) throughout the codebase
+ * catches typos at reference time rather than at runtime.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+export const MSG = Object.freeze({
+  // Authentication handshake (server -> client, then client -> server)
+  CHALLENGE:          'challenge',
+  AUTH:               'auth',
+  AUTH_OK:            'auth-ok',
+  AUTH_FAIL:          'auth-fail',
+
+  // Peer discovery
+  REGISTER_RENDEZVOUS: 'register-rendezvous',
+  PEER_ONLINE:        'peer-online',
+  PEER_OFFLINE:       'peer-offline',
+
+  // WebRTC signaling
+  SDP_OFFER:          'sdp-offer',
+  SDP_ANSWER:         'sdp-answer',
+  ICE_CANDIDATE:      'ice-candidate',
+
+  // Data relay management
+  RELAY_BIND:         'relay-bind',
+  RELAY_RELEASE:      'relay-release',
+  RELAY_DATA:         'relay-data',
+
+  // Session management
+  RECONNECT:          'reconnect',
+  ERROR:              'error',
+  PING:               'ping',
+  PONG:               'pong',
+});
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a failure result with the given error message.
+ * @param {string} error - Human-readable description of why validation failed.
+ * @returns {{ valid: false, error: string }}
+ */
+const fail = (error) => ({ valid: false, error });
+
+/** Singleton success result — no allocation on the hot path. */
+const OK = Object.freeze({ valid: true });
+
+/**
+ * Checks that `value` is a non-empty string.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+const isNonEmptyString = (value) =>
+  typeof value === 'string' && value.length > 0;
+
+// Pre-built set of all known type strings for O(1) membership test.
+const KNOWN_TYPES = new Set(Object.values(MSG));
+
+// ---------------------------------------------------------------------------
+// Per-type field rules
+// ---------------------------------------------------------------------------
+//
+// Each rule is a function that receives the full message object and returns
+// either null (all required fields present and valid) or an error string.
+//
+// Types not listed here have no additional field requirements beyond `type`.
+
+/**
+ * Shared auth/reconnect rule: deviceId, publicKey, signature (strings),
+ * timestamp (positive number).
+ * @param {{ deviceId?: unknown, publicKey?: unknown, signature?: unknown, timestamp?: unknown }} msg
+ * @returns {string|null}
+ */
+const authRule = (msg) => {
+  if (!isNonEmptyString(msg.deviceId))   return 'Missing or invalid field: deviceId (must be a non-empty string)';
+  if (!isNonEmptyString(msg.publicKey))  return 'Missing or invalid field: publicKey (must be a non-empty string)';
+  if (!isNonEmptyString(msg.signature))  return 'Missing or invalid field: signature (must be a non-empty string)';
+  if (typeof msg.timestamp !== 'number' || msg.timestamp <= 0)
+    return 'Missing or invalid field: timestamp (must be a positive number)';
+  return null;
+};
+
+/**
+ * Shared SDP offer/answer rule: targetDeviceId, rendezvousId, sdp (strings).
+ * @param {{ targetDeviceId?: unknown, rendezvousId?: unknown, sdp?: unknown }} msg
+ * @returns {string|null}
+ */
+const sdpRule = (msg) => {
+  if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
+  if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+  if (!isNonEmptyString(msg.sdp))            return 'Missing or invalid field: sdp (must be a non-empty string)';
+  return null;
+};
+
+/**
+ * Map from message type string to a validation rule function.
+ * Rule returns null on success or an error string on failure.
+ *
+ * @type {Map<string, (msg: object) => string|null>}
+ */
+const FIELD_RULES = new Map([
+  [MSG.AUTH, authRule],
+
+  [MSG.REGISTER_RENDEZVOUS, (msg) => {
+    if (!Array.isArray(msg.rendezvousIds) || msg.rendezvousIds.length === 0)
+      return 'Missing or invalid field: rendezvousIds (must be a non-empty array)';
+    return null;
+  }],
+
+  [MSG.SDP_OFFER,  sdpRule],
+  [MSG.SDP_ANSWER, sdpRule],
+
+  [MSG.ICE_CANDIDATE, (msg) => {
+    if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+    if (msg.candidate === null || typeof msg.candidate !== 'object')
+      return 'Missing or invalid field: candidate (must be a non-null object)';
+    return null;
+  }],
+
+  [MSG.RELAY_BIND, (msg) => {
+    if (!isNonEmptyString(msg.transferId))     return 'Missing or invalid field: transferId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+    return null;
+  }],
+
+  [MSG.RECONNECT, authRule],
+]);
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates an inbound protocol message.
+ *
+ * Validation order (fail-fast):
+ *   1. Must be a plain, non-null object
+ *   2. Must have a non-empty `type` string field
+ *   3. JSON-serialised size must not exceed MAX_TEXT_SIZE
+ *   4. `type` must be a known MSG value
+ *   5. Per-type required fields must be present and correctly typed
+ *
+ * @param {unknown} msg - The parsed message value (from JSON.parse or similar).
+ * @returns {{ valid: true } | { valid: false, error: string }}
+ */
+export function validate(msg) {
+  // --- Guard 1: must be a plain, non-null object ---
+  if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) {
+    return fail('Message must be an object');
+  }
+
+  // --- Guard 2: type field must be a non-empty string ---
+  if (!isNonEmptyString(msg.type)) {
+    return fail('Missing or empty type field');
+  }
+
+  // --- Guard 3: size check before any further work ---
+  // JSON.stringify handles circular-reference risk: if msg came from
+  // JSON.parse it cannot be circular, but we handle the error defensively.
+  let serialised;
+  try {
+    serialised = JSON.stringify(msg);
+  } catch {
+    return fail('Message could not be serialised');
+  }
+  if (serialised.length > MAX_TEXT_SIZE) {
+    return fail(`Message too large: ${serialised.length} bytes exceeds the ${MAX_TEXT_SIZE}-byte limit`);
+  }
+
+  // --- Guard 4: type must be a known protocol type ---
+  if (!KNOWN_TYPES.has(msg.type)) {
+    return fail(`Unknown message type: "${msg.type}"`);
+  }
+
+  // --- Guard 5: per-type field validation ---
+  const rule = FIELD_RULES.get(msg.type);
+  if (rule) {
+    const error = rule(msg);
+    if (error !== null) {
+      return fail(error);
+    }
+  }
+
+  return OK;
+}
