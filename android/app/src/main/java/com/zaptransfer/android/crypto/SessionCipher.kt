@@ -354,9 +354,9 @@ class SessionCipher @Inject constructor() {
 
         val message = json.toByteArray(Charsets.UTF_8)
 
-        // Generate a random 24-byte nonce using libsodium's CSPRNG
-        val nonce = ByteArray(XCHACHA20_NONCE_BYTES)
-        sodium.randombytesBuf(nonce, nonce.size)
+        // Generate a random 24-byte nonce using libsodium's CSPRNG.
+        // randomBytesBuf(n) returns a freshly-allocated ByteArray filled by the CSPRNG.
+        val nonce = sodium.randomBytesBuf(XCHACHA20_NONCE_BYTES)
 
         val ciphertext = ByteArray(message.size + POLY1305_TAG_BYTES)
         val ciphertextLen = LongArray(1)

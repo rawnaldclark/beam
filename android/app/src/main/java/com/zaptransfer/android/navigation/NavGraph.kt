@@ -12,6 +12,13 @@ import com.zaptransfer.android.ui.settings.SettingsScreen
 import com.zaptransfer.android.ui.transfer.TransferCompleteSheet
 import com.zaptransfer.android.ui.transfer.TransferProgressScreen
 
+// ─── Argument key constants ───────────────────────────────────────────────────
+// Declared before route constants so they can be referenced in const val
+// string-template initializers without triggering forward-reference errors.
+const val ARG_SESSION_ID = "sessionId"
+const val ARG_DEVICE_ID = "deviceId"
+const val ARG_TRANSFER_ID = "transferId"
+
 // ─── Route constants ──────────────────────────────────────────────────────────
 // Centralised string tokens prevent typos across call sites.
 // Argument names match the NavArgument keys declared in each composable() block.
@@ -58,11 +65,6 @@ const val ROUTE_SETTINGS = "settings"
 
 /** Clipboard history screen: last 20 received clipboard items. */
 const val ROUTE_CLIPBOARD = "clipboard"
-
-// ─── Argument key constants ───────────────────────────────────────────────────
-const val ARG_SESSION_ID = "sessionId"
-const val ARG_DEVICE_ID = "deviceId"
-const val ARG_TRANSFER_ID = "transferId"
 
 /**
  * Root navigation graph for the Beam application.

@@ -87,7 +87,6 @@ class IceRestartPolicy @Inject constructor(
             var previousTransport: Transport? = null
 
             networkMonitor.state
-                .distinctUntilChanged()
                 .collect { state ->
                     when (state) {
                         is NetworkState.Connected -> {
