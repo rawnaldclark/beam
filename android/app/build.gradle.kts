@@ -19,12 +19,12 @@ plugins {
 
 android {
     namespace = "com.zaptransfer.android"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.zaptransfer.android"
         minSdk = 26          // Android 8.0 — required for EncryptedSharedPreferences + modern crypto APIs
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
 
@@ -118,6 +118,7 @@ dependencies {
     // Material 3 design system
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+    implementation("com.google.android.material:material:1.11.0") // XML theme compat
 
     // ─── Activity + Lifecycle ──────────────────────────────────────────────────
     implementation("androidx.activity:activity-compose:1.8.2")

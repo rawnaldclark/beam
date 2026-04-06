@@ -28,7 +28,7 @@ private const val TAG = "TransferCompleteViewModel"
  * @param fileSizeBytes File size in bytes for the size label.
  * @param localUri      Content URI string of the completed file on this device.
  *                      Null until the history record is loaded or while moving.
- * @param mimeType      MIME type for [Intent.ACTION_VIEW]; null falls back to "*\/*".
+ * @param mimeType      MIME type for [Intent.ACTION_VIEW]; null falls back to wildcard.
  */
 data class TransferCompleteUiState(
     val fileName: String = "",
