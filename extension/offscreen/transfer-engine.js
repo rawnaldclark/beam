@@ -34,7 +34,8 @@
  */
 
 import { init as initCrypto, generateKeyPairs, deriveDeviceId } from './crypto.js';
-import { MSG } from '../shared/message-types.js';
+import { MSG, WIRE } from '../shared/message-types.js';
+import { WsClient } from './ws-client.js';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -60,6 +61,15 @@ let deviceId = null;
  * @type {Array<{deviceId: string, name: string, platform: string, isOnline: boolean, lastSeen: number}>}
  */
 let pairedDevices = [];
+
+/**
+ * WebSocket client connected to the relay server.
+ * Null until startup() completes and connectRelay() is called.
+ * Exposed at module scope so future phases (transfer, signalling) can reuse it.
+ *
+ * @type {WsClient | null}
+ */
+let wsClient = null;
 
 // ---------------------------------------------------------------------------
 // Startup
@@ -186,6 +196,94 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ---------------------------------------------------------------------------
+// Relay WebSocket connection + presence tracking (Phase C)
+// ---------------------------------------------------------------------------
+
+/**
+ * Connect to the relay server, register rendezvous IDs, and subscribe to
+ * peer presence events.
+ *
+ * Called once after startup() resolves.  The WsClient handles all subsequent
+ * reconnects internally; this function is not re-called on reconnect.
+ *
+ * Presence events from the relay update chrome.storage.session so that the
+ * popup and service worker always have a fresh online/offline state, and a
+ * MSG.DEVICE_PRESENCE_CHANGED notification is sent to the service worker so
+ * it can rebuild context menus.
+ *
+ * @returns {Promise<void>}
+ */
+async function connectRelay() {
+  wsClient = new WsClient();
+
+  // Derive rendezvous IDs from the paired device list.  A rendezvousId is
+  // stored on each paired device record during the pairing ceremony (Phase D).
+  // Devices without one (e.g. legacy records) are silently skipped.
+  const rendezvousIds = pairedDevices
+    .map((d) => d.rendezvousId)
+    .filter(Boolean);
+
+  try {
+    await wsClient.connect(deviceId, deviceKeys, rendezvousIds);
+    console.log('[Beam] Relay connected. Presence tracking active.');
+  } catch (err) {
+    // Connection failure is non-fatal; the WsClient will keep retrying.
+    // Log and continue — the extension works in degraded mode until the relay
+    // becomes reachable.
+    console.warn('[Beam] Initial relay connection failed (will retry):', err);
+  }
+
+  // ── Peer presence handlers ──────────────────────────────────────────────
+
+  wsClient.on(WIRE.PEER_ONLINE, (msg) => {
+    updatePresence(msg.deviceId, true);
+  });
+
+  wsClient.on(WIRE.PEER_OFFLINE, (msg) => {
+    updatePresence(msg.deviceId, false);
+  });
+}
+
+/**
+ * Persist a device's online/offline state and notify the service worker.
+ *
+ * Presence is stored in chrome.storage.session (cleared on browser restart)
+ * keyed by device ID.  The service worker receives a DEVICE_PRESENCE_CHANGED
+ * message carrying the full paired device list annotated with current presence
+ * so it can rebuild context menus without querying storage itself.
+ *
+ * @param {string}  peerId   - The relay-assigned device ID of the peer.
+ * @param {boolean} isOnline - true = peer came online, false = peer went offline.
+ * @returns {Promise<void>}
+ */
+async function updatePresence(peerId, isOnline) {
+  // chrome.storage.session.get() always returns an object; the key is absent
+  // (not null/undefined) when it has never been written.
+  const stored   = await chrome.storage.session.get('devicePresence');
+  const presence = stored.devicePresence ?? {};
+
+  presence[peerId] = { isOnline, lastSeen: Date.now() };
+  await chrome.storage.session.set({ devicePresence: presence });
+
+  // Annotate the in-memory paired list with live presence state and forward
+  // to the service worker.  The SW uses this to update context menu items.
+  const devices = pairedDevices.map((d) => ({
+    ...d,
+    isOnline: presence[d.deviceId]?.isOnline ?? false,
+  }));
+
+  try {
+    chrome.runtime.sendMessage({
+      type:    MSG.DEVICE_PRESENCE_CHANGED,
+      payload: { devices },
+    });
+  } catch (err) {
+    // The service worker may be suspended between events; the error is benign.
+    console.warn('[Beam] Could not notify SW of presence change:', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Stub handlers (to be replaced in later phases)
 // ---------------------------------------------------------------------------
 
@@ -236,4 +334,8 @@ async function handleTransfer(payload) {
 // Boot
 // ---------------------------------------------------------------------------
 
-startup().catch(console.error);
+// Chain relay connection after startup so deviceId, deviceKeys, and
+// pairedDevices are fully populated before we attempt to authenticate.
+startup()
+  .then(() => connectRelay())
+  .catch(console.error);
