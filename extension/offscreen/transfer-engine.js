@@ -223,18 +223,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Sender : popup
     // Response: { type: MSG.DEVICE_LIST, payload: { devices } }
     case MSG.GET_DEVICE_LIST:
-      sendResponse({
-        type:    MSG.DEVICE_LIST,
-        payload: { devices: pairedDevices },
+      _bootPromise.then(() => {
+        sendResponse({
+          type:    MSG.DEVICE_LIST,
+          payload: { devices: pairedDevices },
+        });
       });
-      return false;
+      return true; // async — wait for boot
 
     // ── Start pairing ceremony (from popup) ─────────────────────────────────
     // Sender : popup
     // Response: { type: MSG.PAIRING_QR_DATA, payload: { deviceId, ed25519Pk,
     //             x25519Pk, relayUrl } }
     case MSG.START_PAIRING:
-      handleStartPairing(sendResponse);
+      // Must wait for boot to complete so deviceId and keys are available.
+      _bootPromise.then(() => handleStartPairing(sendResponse));
       return true; // async
 
     // ── User confirmed the SAS emoji matches (from popup) ───────────────────
@@ -949,8 +952,7 @@ function _reconstructFile(payload) {
 // Boot
 // ---------------------------------------------------------------------------
 
-// Chain relay connection after startup so deviceId, deviceKeys, and
-// pairedDevices are fully populated before we attempt to authenticate.
-startup()
+// Boot promise — message handlers await this before accessing deviceId/keys.
+const _bootPromise = startup()
   .then(() => connectRelay())
-  .catch(console.error);
+  .catch(err => console.error('[Beam] Boot failed:', err));

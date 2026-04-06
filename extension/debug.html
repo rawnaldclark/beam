@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head><title>Beam Debug</title></head>
+<body>
+<h2>Beam Crypto Debug</h2>
+<pre id="log" style="font-size:14px; white-space:pre-wrap;"></pre>
+
+<!-- Load libsodium the same way as transfer-engine.html -->
+<script src="lib/libsodium-sumo.js"></script>
+<script src="lib/libsodium-wrappers-sumo.js"></script>
+
+<script type="module">
+const log = document.getElementById('log');
+function L(msg) { log.textContent += msg + '\n'; console.log(msg); }
+
+try {
+  L('Step 1: Check self.sodium exists: ' + !!self.sodium);
+  L('Step 1a: typeof self.sodium: ' + typeof self.sodium);
+  L('Step 1b: self.sodium.ready exists: ' + !!(self.sodium && self.sodium.ready));
+
+  if (self.sodium && self.sodium.ready) {
+    L('Step 2: Awaiting sodium.ready...');
+    await self.sodium.ready;
+    L('Step 2: sodium is ready!');
+
+    const s = self.sodium;
+
+    // Generate keypair
+    L('Step 3: Generating Ed25519 keypair...');
+    const kp = s.crypto_sign_keypair();
+    L('Step 3: publicKey length: ' + kp.publicKey.length);
+
+    // Hash
+    L('Step 4: SHA-256 hash...');
+    const hash = s.crypto_hash_sha256(kp.publicKey);
+    L('Step 4: hash length: ' + hash.length);
+
+    // Derive deviceId
+    const idBytes = hash.slice(0, 16);
+    L('Step 5: idBytes length: ' + idBytes.length);
+
+    // base64url encode (browser path)
+    const b64 = btoa(String.fromCharCode(...idBytes));
+    const deviceId = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    L('Step 6: deviceId = "' + deviceId + '" (length: ' + deviceId.length + ')');
+
+    // Test XChaCha20
+    L('Step 7: XChaCha20-Poly1305 test...');
+    const key = s.crypto_aead_xchacha20poly1305_ietf_keygen();
+    const nonce = s.randombytes_buf(24);
+    const msg = new TextEncoder().encode('hello beam');
+    const ct = s.crypto_aead_xchacha20poly1305_ietf_encrypt(msg, null, null, nonce, key);
+    const pt = s.crypto_aead_xchacha20poly1305_ietf_decrypt(null, ct, null, nonce, key);
+    L('Step 7: decrypt = "' + new TextDecoder().decode(pt) + '"');
+
+    L('\n=== ALL TESTS PASSED ===');
+  } else {
+    L('ERROR: self.sodium not available. Check libsodium script loading.');
+    L('self.libsodium exists: ' + !!self.libsodium);
+  }
+} catch(e) {
+  L('ERROR: ' + e.message);
+  L('Stack: ' + e.stack);
+}
+</script>
+</body>
+</html>
