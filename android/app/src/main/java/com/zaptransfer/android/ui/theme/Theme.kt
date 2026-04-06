@@ -10,8 +10,6 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalContext
-import com.google.accompanist.systemuicontroller.rememberSystemUiController
-
 // ─── Dark colour scheme ───────────────────────────────────────────────────────
 // Default for Beam — the app targets a dark-mode-first aesthetic that works well
 // for file-transfer contexts (long sessions, often at night or in low-light).

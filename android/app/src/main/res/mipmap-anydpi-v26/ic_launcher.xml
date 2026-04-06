@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive icon for API 26+ (Android 8.0+).
+
+    Uses color resources so no PNG assets are required at build time.
+    The background is Beam's indigo brand color (#6366F1) and the
+    foreground is white — replace the foreground drawable with a
+    vector asset in a later design pass.
+
+    Both ic_launcher.xml and ic_launcher_round.xml reference this same
+    adaptive-icon format; Android uses the round variant on launchers
+    that request circular icon masks.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@color/ic_launcher_foreground"/>
+</adaptive-icon>

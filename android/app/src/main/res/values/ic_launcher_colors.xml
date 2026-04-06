@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Color resources used by the adaptive launcher icon.
+
+    ic_launcher_background: Beam's primary indigo brand color.
+    ic_launcher_foreground: White — used as a solid color layer until a
+                            proper vector foreground asset is designed.
+
+    These are intentionally in a separate file from colors.xml so the
+    icon colors can be found and updated independently during a design pass.
+-->
+<resources>
+    <color name="ic_launcher_background">#6366F1</color>
+    <color name="ic_launcher_foreground">#FFFFFF</color>
+</resources>
