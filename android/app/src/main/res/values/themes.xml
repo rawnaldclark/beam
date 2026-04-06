@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    XML theme stub required so the manifest android:theme="@style/Theme.Beam" resolves.
+    The actual visual theme is applied entirely in Compose via BeamTheme — this XML
+    theme only prevents the system from applying a default window background before
+    Compose draws.
+
+    Theme.Beam extends Theme.Material3.DayNight.NoActionBar:
+      - DayNight: respects system dark/light preference for window background.
+      - NoActionBar: removes the legacy ActionBar — Compose handles its own top bars.
+-->
+<resources>
+    <style name="Theme.Beam" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Compose will draw its own status bar colour via WindowInsetsController -->
+    </style>
+</resources>

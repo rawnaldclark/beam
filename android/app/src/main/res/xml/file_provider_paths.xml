@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider path configuration.
+    Exposes the app's cache directory for sharing in-progress reassembly temp files
+    as content:// URIs.
+
+    "cache-path" maps to Context.getCacheDir(), which is where TransferEngine writes
+    partial files during receive. Once the transfer is verified, the file is moved to
+    the user's chosen download location via MediaStore or DocumentsProvider.
+
+    The path="" attribute means all subdirectories of cacheDir are accessible —
+    restrict to "transfers/" subdirectory in Phase F when temp file paths are finalised.
+-->
+<paths>
+    <cache-path
+        name="beam_transfers"
+        path="transfers/" />
+    <external-files-path
+        name="beam_downloads"
+        path="Downloads/" />
+</paths>

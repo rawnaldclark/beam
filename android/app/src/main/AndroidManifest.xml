@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AndroidManifest.xml for Beam (ZapTransfer Android app).
+
+    All permissions match spec §8.8.
+    Foreground service type DATA_SYNC matches the spec (§8.4) and Android 14
+    requirement that foreground service types be declared in the manifest.
+
+    IMPORTANT: REQUEST_IGNORE_BATTERY_OPTIMIZATIONS must also be presented to
+    the user via ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS at runtime (after
+    first successful pairing) — the manifest permission alone is insufficient.
+    This is handled in PermissionHelper (Phase I, Task 31).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ───── Permissions ───────────────────────────────────────────────── -->
+
+    <!-- WebSocket relay and STUN/ICE connections to relay + internet -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- QR code scanning via CameraX + ML Kit — prompts user at runtime (API 23+) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Required to call startForeground() from TransferForegroundService -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!--
+        Android 14+ (API 34): must declare the specific foreground service type.
+        DATA_SYNC is correct for file transfer workloads per Google Play policy.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- PARTIAL_WAKE_LOCK + WifiLock held by WakeLockManager during active transfers -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
+        Android 13+ (API 33): must request at runtime before posting notifications.
+        POST_NOTIFICATIONS is ignored on API < 33 — the system grants it automatically.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+        Allows the app to request exclusion from Doze / App Standby.
+        Critical for Samsung, Xiaomi, Huawei — aggressive battery policies kill
+        foreground services without this. Must also trigger the runtime dialog.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Read network type (WiFi/cellular) for ICE restart + relay fallback decisions -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- WifiManager.WifiLock to prevent WiFi from sleeping during large transfers -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- ───── Hardware features ──────────────────────────────────────────── -->
+    <!-- Mark camera as optional so the app can install on devices without one
+         (clipboard-only / file-transfer-only use case; PIN pairing still works) -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+
+    <!-- ───── Application ───────────────────────────────────────────────── -->
+    <application
+        android:name=".ZapTransferApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Beam"
+        android:localeConfig="@xml/locales_config">
+
+        <!-- ── Main Activity ──────────────────────────────────────────── -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+
+            <!-- Launcher entry point -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+                Deep link: zaptransfer://transfer/{transferId}
+                Posted as a PendingIntent from transfer completion notifications
+                so tapping the notification navigates directly to the progress/
+                complete screen for that transfer.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="zaptransfer"
+                    android:host="transfer" />
+            </intent-filter>
+        </activity>
+
+        <!-- ── Transfer Foreground Service ───────────────────────────── -->
+        <!--
+            TransferForegroundService handles active file transfers in the background.
+            Type DATA_SYNC must match the foreground service type permission above.
+
+            foregroundServiceType is required on API 34+ (Android 14).
+            The system will throw if the declared type doesn't match the permission.
+
+            stopWithTask=false: the service keeps running if the user swipes away the
+            app from recents, which is the desired behaviour during active transfers.
+        -->
+        <service
+            android:name=".service.TransferForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
+
+        <!--
+            FileProvider: required to share temp files (in-progress reassembly files)
+            with the Downloads system via content:// URIs on Android 7+.
+            Configured in res/xml/file_provider_paths.xml (created Phase G).
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths" />
+        </provider>
+
+    </application>
+
+</manifest>

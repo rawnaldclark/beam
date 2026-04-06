@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ (API 31) data extraction rules for cloud backup and
+    device-to-device transfers.
+
+    Mirrors backup_rules.xml exclusions — both are required for full coverage:
+      - backup_rules.xml covers legacy Auto Backup (API 23-30 and < API 31 fallback)
+      - data_extraction_rules.xml covers API 31+ cloud backup and D2D transfers
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude
+            domain="database"
+            path="zap_db" />
+        <exclude
+            domain="sharedpref"
+            path="zap_encrypted_prefs.xml" />
+        <exclude
+            domain="file"
+            path="transfers/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude
+            domain="database"
+            path="zap_db" />
+        <exclude
+            domain="sharedpref"
+            path="zap_encrypted_prefs.xml" />
+        <exclude
+            domain="file"
+            path="transfers/" />
+    </device-transfer>
+</data-extraction-rules>

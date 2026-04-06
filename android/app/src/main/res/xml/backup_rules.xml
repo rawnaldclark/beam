@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ (API 31) backup rules.
+    Exclude sensitive data from Auto Backup and Device-to-Device transfers.
+
+    The Room database (zap_db) is excluded because:
+      1. It contains public keys of paired devices — these should not migrate
+         to a new device as they're tied to the original device's key identity.
+      2. chunk_progress temp file paths are device-local and will be invalid
+         on a restored device.
+
+    EncryptedSharedPreferences (which stores the X25519 private key) is backed
+    by the Android Keystore hardware — the OS already prevents its backup.
+-->
+<full-backup-content>
+    <exclude
+        domain="database"
+        path="zap_db" />
+    <exclude
+        domain="sharedpref"
+        path="zap_encrypted_prefs.xml" />
+    <exclude
+        domain="file"
+        path="transfers/" />
+</full-backup-content>
