@@ -397,6 +397,7 @@ async function showPairingView() {
   let qrData;
   try {
     qrData = await startPairing();
+    console.log('[Beam popup] startPairing returned:', JSON.stringify(qrData));
   } catch (err) {
     console.error('[Beam popup] startPairing failed:', err);
     showToast('Could not start pairing. Is the extension background running?', 'error');
@@ -406,10 +407,13 @@ async function showPairingView() {
 
   if (!qrData) {
     // Background returned no payload — likely the offscreen doc isn't ready yet.
+    console.error('[Beam popup] qrData is null/undefined — offscreen not ready?');
     showToast('Pairing service unavailable. Try again in a moment.', 'error');
     showView('main');
     return;
   }
+
+  console.log('[Beam popup] deviceId:', qrData.deviceId, 'length:', qrData.deviceId?.length);
 
   // Render QR code into the container element.
   qrContainer.innerHTML = ''; // clear placeholder

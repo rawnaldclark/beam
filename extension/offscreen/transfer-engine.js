@@ -611,17 +611,18 @@ async function updatePresence(peerId, isOnline) {
  * @returns {Promise<void>}
  */
 async function handleStartPairing(sendResponse) {
-  sendResponse({
+  console.log('[Beam offscreen] handleStartPairing called. deviceId:', deviceId, 'length:', deviceId?.length, 'keysExist:', !!deviceKeys);
+  const response = {
     type:    MSG.PAIRING_QR_DATA,
     payload: {
       deviceId,
-      // Serialise as plain Arrays (JSON-safe; Uint8Array does not survive
-      // the chrome.runtime message boundary).
       ed25519Pk: deviceKeys ? Array.from(deviceKeys.ed25519.pk) : null,
       x25519Pk:  deviceKeys ? Array.from(deviceKeys.x25519.pk)  : null,
       relayUrl:  RELAY_URL,
     },
-  });
+  };
+  console.log('[Beam offscreen] Sending response:', JSON.stringify({ deviceId: response.payload.deviceId, relayUrl: response.payload.relayUrl }));
+  sendResponse(response);
 }
 
 /**
