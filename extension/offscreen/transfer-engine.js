@@ -33,9 +33,10 @@
  * @module offscreen/transfer-engine
  */
 
-import { init as initCrypto, generateKeyPairs, deriveDeviceId } from './crypto.js';
+import { init as initCrypto, generateKeyPairs, deriveDeviceId, deriveSharedSecret, deriveSAS, sasToEmoji } from './crypto.js';
 import { MSG, WIRE } from '../shared/message-types.js';
 import { WsClient } from './ws-client.js';
+import { RELAY_URL } from '../shared/constants.js';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -70,6 +71,16 @@ let pairedDevices = [];
  * @type {WsClient | null}
  */
 let wsClient = null;
+
+/**
+ * Holds in-progress pairing state between the moment we receive a peer's
+ * public keys and the moment the user confirms the SAS emoji and names the
+ * device.  Set by handlePairRequest(), cleared by savePairedDevice() or on
+ * any error.
+ *
+ * @type {{ peerInfo: object, sharedSecret: Uint8Array } | null}
+ */
+let pendingPairing = null;
 
 // ---------------------------------------------------------------------------
 // Startup
@@ -175,11 +186,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // ── Start pairing ceremony (from popup) ─────────────────────────────────
     // Sender : popup
-    // Response: { type: MSG.PAIRING_QR_DATA, payload: { deviceId, publicKey } }
-    // NOTE: Full implementation deferred to Phase D (pairing task).
+    // Response: { type: MSG.PAIRING_QR_DATA, payload: { deviceId, ed25519Pk,
+    //             x25519Pk, relayUrl } }
     case MSG.START_PAIRING:
       handleStartPairing(sendResponse);
       return true; // async
+
+    // ── User confirmed the SAS emoji matches (from popup) ───────────────────
+    // Sender : popup (after the user taps "They match")
+    // No response — completion is signalled by MSG.PAIRING_COMPLETE later.
+    case MSG.PAIRING_CONFIRM_SAS:
+      completePairing(msg.payload);
+      return false;
+
+    // ── User supplied a friendly device name (from popup) ───────────────────
+    // Sender : popup (naming form submit)
+    // No response — MSG.PAIRING_COMPLETE is sent once the record is persisted.
+    case MSG.PAIRING_SET_DEVICE_NAME:
+      savePairedDevice(msg.payload);
+      return false;
 
     // ── Initiate an outbound transfer (from popup or service worker) ─────────
     // Sender : popup (direct file drop) or background.js (context menu / shortcut)
@@ -242,6 +267,23 @@ async function connectRelay() {
   wsClient.on(WIRE.PEER_OFFLINE, (msg) => {
     updatePresence(msg.deviceId, false);
   });
+
+  // ── Incoming pairing request ────────────────────────────────────────────
+  // An Android peer that scanned our QR code sends its public keys inside an
+  // SDP_OFFER frame during Phase D.  Phase H will repurpose SDP_OFFER for
+  // WebRTC signalling; until then we distinguish the two by the absence of an
+  // `sdp` field in a pairing message.
+  //
+  // TODO(Phase H): replace this dual-purpose handler with a dedicated
+  // PAIRING_REQUEST wire type once the Android companion app is updated.
+  wsClient.on(WIRE.SDP_OFFER, async (msg) => {
+    // Distinguish a pairing request (carries peer public keys) from a WebRTC
+    // SDP offer (carries `sdp` field).  The latter is handled in Phase H.
+    if (msg.ed25519Pk && msg.x25519Pk) {
+      await handlePairRequest(msg);
+    }
+    // Otherwise silently ignore — WebRTC handling not yet implemented.
+  });
 }
 
 /**
@@ -284,32 +326,183 @@ async function updatePresence(peerId, isOnline) {
 }
 
 // ---------------------------------------------------------------------------
-// Stub handlers (to be replaced in later phases)
+// Pairing ceremony handlers (Phase D)
 // ---------------------------------------------------------------------------
 
 /**
- * Stub: begin the QR / SAS pairing ceremony.
+ * Respond to MSG.START_PAIRING from the popup with the QR payload the popup
+ * needs to render the QR code.
  *
- * Returns just enough information for the popup to render a QR code in
- * Phase A testing.  The real implementation (Phase D) will:
- *   1. Generate an ephemeral X25519 key pair for the ECDH exchange.
- *   2. Encode the QR payload (deviceId + public key + relay URL) as a URL.
- *   3. Open a WebSocket to the relay to wait for the peer's pairing request.
+ * The QR payload encodes this device's identity and both public keys so the
+ * Android companion app can:
+ *   1. Derive the rendezvous ID and open a WebSocket to the relay.
+ *   2. Send its own public keys back (via WIRE.SDP_OFFER) to begin the ECDH
+ *      exchange.
  *
- * @param {Function} sendResponse - Reply callback.
+ * Both the Ed25519 key (for identity binding) and the X25519 key (for the DH
+ * exchange) are included so the popup can encode them into the QR code without
+ * needing to query storage separately.
+ *
+ * @param {Function} sendResponse - chrome.runtime.sendMessage reply callback.
  * @returns {Promise<void>}
  */
 async function handleStartPairing(sendResponse) {
-  // Phase A stub: echo back the device's identity so the popup can display
-  // a placeholder QR code while the real pairing flow is being built.
   sendResponse({
     type:    MSG.PAIRING_QR_DATA,
     payload: {
       deviceId,
-      // Expose only the public key (never the secret key).
-      publicKey: deviceKeys ? Array.from(deviceKeys.ed25519.pk) : null,
+      // Serialise as plain Arrays (JSON-safe; Uint8Array does not survive
+      // the chrome.runtime message boundary).
+      ed25519Pk: deviceKeys ? Array.from(deviceKeys.ed25519.pk) : null,
+      x25519Pk:  deviceKeys ? Array.from(deviceKeys.x25519.pk)  : null,
+      relayUrl:  RELAY_URL,
     },
   });
+}
+
+/**
+ * Handle an incoming pairing request from an Android peer.
+ *
+ * Called when the relay delivers a WIRE.SDP_OFFER frame that carries peer
+ * public keys (the Phase D pairing marker) rather than a WebRTC SDP blob.
+ *
+ * Steps:
+ *   1. Perform X25519 ECDH to derive a shared secret.
+ *   2. Derive the 4-emoji SAS from the shared secret and both Ed25519 keys.
+ *   3. Push the SAS to the popup for out-of-band user confirmation.
+ *   4. Stash the pairing state in `pendingPairing` until the user confirms.
+ *
+ * The pairing is not finalised here — `completePairing` (triggered by
+ * MSG.PAIRING_CONFIRM_SAS) marks the SAS step as verified, and
+ * `savePairedDevice` (triggered by MSG.PAIRING_SET_DEVICE_NAME) persists the
+ * paired device record.
+ *
+ * @param {{
+ *   deviceId:  string,
+ *   ed25519Pk: number[],
+ *   x25519Pk:  number[]
+ * }} peerInfo - Public identity received from the Android peer.
+ * @returns {Promise<void>}
+ */
+async function handlePairRequest(peerInfo) {
+  if (!deviceKeys) {
+    console.error('[Beam] handlePairRequest: device keys not yet loaded.');
+    return;
+  }
+
+  // Step 1: X25519 scalar multiplication → 32-byte shared secret.
+  const sharedSecret = deriveSharedSecret(
+    new Uint8Array(deviceKeys.x25519.sk),
+    new Uint8Array(peerInfo.x25519Pk),
+  );
+
+  // Step 2: Derive the 8-byte SAS and map it to 4 emoji.
+  // pk1 and pk2 are ordered canonically so both sides produce the same SAS.
+  const sasBytes = deriveSAS(
+    sharedSecret,
+    deviceKeys.ed25519.pk,
+    new Uint8Array(peerInfo.ed25519Pk),
+  );
+  const emojis = sasToEmoji(sasBytes);
+
+  // Step 3: Push SAS emoji to the popup for user verification.
+  try {
+    chrome.runtime.sendMessage({
+      type:    MSG.PAIRING_SAS,
+      payload: { emojis, peerId: peerInfo.deviceId },
+    });
+  } catch (err) {
+    // The popup may have closed before the SAS arrived; log and continue so
+    // the pending state is still available if the popup re-opens.
+    console.warn('[Beam] Could not push SAS to popup:', err);
+  }
+
+  // Step 4: Stash pairing state — overwrite any previous in-flight pairing.
+  pendingPairing = { peerInfo, sharedSecret };
+}
+
+/**
+ * Handle MSG.PAIRING_CONFIRM_SAS: the user indicated that the SAS emoji
+ * displayed on both devices match.
+ *
+ * At this point the shared secret is authenticated.  The popup will
+ * immediately follow with MSG.PAIRING_SET_DEVICE_NAME; this function is a
+ * no-op gate that could be extended in the future to send a confirmation
+ * signal back to the Android peer.
+ *
+ * @param {object} _payload - Unused (no payload fields required for SAS confirm).
+ */
+function completePairing(_payload) {
+  if (!pendingPairing) {
+    console.warn('[Beam] completePairing called with no pending pairing — ignoring.');
+    return;
+  }
+  // Nothing to do beyond keeping pendingPairing alive for the naming step.
+  // Future: send an acknowledgement wire message to the Android peer here.
+  console.log(`[Beam] SAS confirmed for peer ${pendingPairing.peerInfo.deviceId}.`);
+}
+
+/**
+ * Handle MSG.PAIRING_SET_DEVICE_NAME: persist the newly-paired device record
+ * to chrome.storage.local and broadcast MSG.PAIRING_COMPLETE to the popup.
+ *
+ * Stores:
+ *   - Both Ed25519 and X25519 public keys (as plain Arrays).
+ *   - The derived shared secret (as a plain Array) for future session
+ *     key derivations without re-running ECDH.
+ *   - The human-readable name and icon chosen by the user.
+ *   - A pairedAt timestamp.
+ *
+ * After persisting, `pendingPairing` is cleared and the popup receives
+ * MSG.PAIRING_COMPLETE so it can transition to the device list view.
+ *
+ * @param {{ name: string, icon: string }} param0 - Name and icon slug from
+ *   the device-naming form.
+ * @returns {Promise<void>}
+ */
+async function savePairedDevice({ name, icon }) {
+  if (!pendingPairing) {
+    console.error('[Beam] savePairedDevice called with no pending pairing — ignoring.');
+    return;
+  }
+
+  /** @type {object} */
+  const device = {
+    deviceId:       pendingPairing.peerInfo.deviceId,
+    name,
+    icon,
+    // Store public keys as plain Arrays so they survive JSON serialisation.
+    ed25519PublicKey: Array.from(pendingPairing.peerInfo.ed25519Pk),
+    x25519PublicKey:  Array.from(pendingPairing.peerInfo.x25519Pk),
+    // Persist the shared secret so the transfer engine can derive session
+    // keys on demand without re-running ECDH.
+    // NOTE: sharedSecret is stored in chrome.storage.local which is not
+    // encrypted at rest on all platforms.  A future hardening pass should
+    // wrap this with a key derived from the OS keychain.
+    sharedSecret: Array.from(pendingPairing.sharedSecret),
+    pairedAt:     Date.now(),
+  };
+
+  pairedDevices.push(device);
+  await chrome.storage.local.set({ pairedDevices });
+
+  // TODO(Phase D follow-up): compute the rendezvous ID for this pair via
+  // HKDF and register it with the relay so presence events flow immediately
+  // after pairing without requiring a restart.
+
+  pendingPairing = null;
+
+  // Notify the popup that pairing is complete.
+  try {
+    chrome.runtime.sendMessage({
+      type:    MSG.PAIRING_COMPLETE,
+      payload: { device },
+    });
+  } catch (err) {
+    console.warn('[Beam] Could not send PAIRING_COMPLETE to popup:', err);
+  }
+
+  console.log(`[Beam] Paired device saved: ${name} (${device.deviceId})`);
 }
 
 /**
