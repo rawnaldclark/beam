@@ -32,6 +32,19 @@ import { MSG }                  from './shared/message-types.js';
 import { KEEPALIVE_INTERVAL_MS } from './shared/constants.js';
 
 // ---------------------------------------------------------------------------
+// Badge state — tracks a pending "failure" clear so we can dismiss it on the
+// next meaningful interaction rather than on a fixed timer.
+// ---------------------------------------------------------------------------
+
+/**
+ * When the badge shows an error indicator ("!") we record the notification ID
+ * so that the next INITIATE_TRANSFER or context-menu click can clear it.
+ *
+ * @type {boolean}
+ */
+let badgeShowingFailure = false;
+
+// ---------------------------------------------------------------------------
 // Service worker lifecycle
 // ---------------------------------------------------------------------------
 
@@ -91,19 +104,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // ── Badge update ────────────────────────────────────────────────────────
     case MSG.UPDATE_BADGE:
-      chrome.action.setBadgeText({ text: msg.payload.text ?? '' });
-      chrome.action.setBadgeBackgroundColor({ color: msg.payload.color ?? '#4285F4' });
+      handleBadgeUpdate(msg.payload);
       break;
 
     // ── Desktop notification ────────────────────────────────────────────────
     case MSG.SEND_NOTIFICATION:
-      chrome.notifications.create(msg.payload.id ?? '', {
-        type:    'basic',
-        iconUrl: 'icons/icon-128.png',
-        title:   msg.payload.title,
-        message: msg.payload.message,
-        buttons: msg.payload.buttons ?? [],
-      });
+      createNotification(msg.payload);
       break;
 
     // ── Device presence — rebuild context menus ─────────────────────────────
@@ -139,6 +145,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
  */
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   await ensureOffscreen();
+
+  // Clear any lingering failure badge when the user initiates a new transfer.
+  if (badgeShowingFailure) clearBadge();
 
   // Parse prefix from menu item ID: "img_{deviceId}", "link_{deviceId}", "text_{deviceId}"
   const separatorIdx  = info.menuItemId.indexOf('_');
@@ -178,10 +187,31 @@ chrome.commands.onCommand.addListener(async (command) => {
   await ensureOffscreen();
 
   if (command === 'send-clipboard') {
+    // Clear any lingering failure badge when the user initiates a new action.
+    if (badgeShowingFailure) clearBadge();
+
     chrome.runtime.sendMessage({
       type:    MSG.INITIATE_TRANSFER,
-      payload: { type: 'clipboard', targetDevice: 'last-used' },
+      payload: { type: 'clipboard', targetDeviceId: 'last-used' },
     });
+    return;
+  }
+
+  if (command === 'open-device-picker') {
+    // chrome.action.openPopup() is available in Chrome 127+.  Fall back to a
+    // notification that guides the user to click the extension icon when the
+    // API is absent (e.g. older Chrome or a non-active-tab context).
+    if (typeof chrome.action.openPopup === 'function') {
+      try {
+        await chrome.action.openPopup();
+      } catch {
+        // openPopup can throw if the active window isn't a normal browser
+        // window (e.g. a devtools window).  Show the fallback notification.
+        showOpenPopupFallbackNotification();
+      }
+    } else {
+      showOpenPopupFallbackNotification();
+    }
   }
 });
 
@@ -191,9 +221,15 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 /**
  * Forward notification button clicks to the offscreen document so it can
- * act on user responses (e.g. "Accept" / "Decline" on an incoming transfer).
+ * act on user responses (e.g. "Open" / "Save" on an incoming file, or
+ * "Retry" on a failed transfer).
  *
- * @param {string} notifId    - The notification ID.
+ * The type string "NOTIFICATION_ACTION" is intentionally not in the MSG
+ * freeze object because it is a SW-internal routing concern; the offscreen
+ * document and popup each handle it by matching this literal string.
+ *
+ * @param {string} notifId     - The notification ID (same as the transfer ID
+ *                               embedded by createNotification).
  * @param {number} buttonIndex - Zero-based index of the clicked button.
  */
 chrome.notifications.onButtonClicked.addListener((notifId, buttonIndex) => {
@@ -280,6 +316,174 @@ function rebuildContextMenus(devices) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Badge helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle a structured badge-update request.
+ *
+ * Recognised `status` values:
+ *   "progress"  — transfer in flight.  `percent` (0-100) is required.
+ *                 Shows e.g. "47%" with a blue background.
+ *   "complete"  — transfer succeeded.  Shows a checkmark with green
+ *                 background; auto-clears after 3 seconds.
+ *   "failure"   — transfer failed.  Shows "!" with a red background.
+ *                 Remains until the user triggers the next transfer.
+ *   "clear"     — unconditionally clear the badge (e.g. on idle).
+ *
+ * Legacy payloads that pass raw `text` / `color` fields directly are still
+ * accepted for backwards compatibility.
+ *
+ * @param {{ status?: string, percent?: number, text?: string, color?: string }} payload
+ */
+function handleBadgeUpdate(payload) {
+  const { status, percent } = payload;
+
+  switch (status) {
+    case 'progress': {
+      // Clamp to 0-100 and format as an integer percentage string.
+      const pct = Math.max(0, Math.min(100, Math.round(percent ?? 0)));
+      badgeShowingFailure = false;
+      chrome.action.setBadgeBackgroundColor({ color: '#4285F4' }); // Google blue
+      chrome.action.setBadgeText({ text: `${pct}%` });
+      break;
+    }
+
+    case 'complete': {
+      badgeShowingFailure = false;
+      chrome.action.setBadgeBackgroundColor({ color: '#22c55e' }); // Tailwind green-500
+      chrome.action.setBadgeText({ text: '\u2713' }); // Unicode checkmark ✓
+
+      // Auto-clear after 3 seconds so the badge does not persist indefinitely.
+      setTimeout(clearBadge, 3_000);
+      break;
+    }
+
+    case 'failure': {
+      badgeShowingFailure = true;
+      chrome.action.setBadgeBackgroundColor({ color: '#EA4335' }); // Google red
+      chrome.action.setBadgeText({ text: '!' });
+      break;
+    }
+
+    case 'clear': {
+      clearBadge();
+      break;
+    }
+
+    default: {
+      // Legacy path: caller supplies raw text/color.
+      badgeShowingFailure = false;
+      chrome.action.setBadgeText({ text: payload.text ?? '' });
+      chrome.action.setBadgeBackgroundColor({ color: payload.color ?? '#4285F4' });
+    }
+  }
+}
+
+/**
+ * Remove the badge text and reset failure state.
+ */
+function clearBadge() {
+  badgeShowingFailure = false;
+  chrome.action.setBadgeText({ text: '' });
+}
+
+// ---------------------------------------------------------------------------
+// Notification helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a Chrome notification from a structured payload.
+ *
+ * Recognised `kind` values:
+ *   "send-complete"      — outgoing transfer finished.
+ *   "receive-complete"   — incoming transfer finished; offers Open / Save.
+ *   "clipboard-received" — remote clipboard content arrived; shows preview.
+ *   "transfer-failed"    — transfer failed; offers a Retry button.
+ *
+ * Legacy payloads without a `kind` field fall back to using the raw
+ * `title` / `message` / `buttons` fields directly.
+ *
+ * @param {{
+ *   kind?: string,
+ *   id?: string,
+ *   title?: string,
+ *   message?: string,
+ *   buttons?: Array<{title: string}>,
+ *   fileName?: string,
+ *   deviceName?: string,
+ *   preview?: string,
+ * }} payload
+ */
+function createNotification(payload) {
+  const { kind } = payload;
+
+  /** @type {string} */
+  let title;
+  /** @type {string} */
+  let message;
+  /** @type {Array<{title: string}>} */
+  let buttons = [];
+
+  switch (kind) {
+    case 'send-complete':
+      title   = 'Transfer complete';
+      message = `Sent ${payload.fileName ?? 'file'} to ${payload.deviceName ?? 'device'}`;
+      break;
+
+    case 'receive-complete':
+      title   = `${payload.deviceName ?? 'Device'} sent you a file`;
+      message = payload.fileName ?? 'Unknown file';
+      buttons = [{ title: 'Open' }, { title: 'Save' }];
+      break;
+
+    case 'clipboard-received': {
+      title   = `Clipboard from ${payload.deviceName ?? 'device'}`;
+      // Show up to 100 chars of the clipboard content as a preview.
+      const preview = payload.preview ?? '';
+      message = preview.length > 100 ? `${preview.slice(0, 97)}...` : preview;
+      break;
+    }
+
+    case 'transfer-failed':
+      title   = `Transfer to ${payload.deviceName ?? 'device'} failed`;
+      message = payload.fileName ? `Could not send ${payload.fileName}` : 'Transfer did not complete';
+      buttons = [{ title: 'Retry' }];
+      break;
+
+    default:
+      // Legacy path: caller supplies raw title / message / buttons.
+      title   = payload.title   ?? 'Beam';
+      message = payload.message ?? '';
+      buttons = payload.buttons ?? [];
+  }
+
+  chrome.notifications.create(payload.id ?? '', {
+    type:    'basic',
+    iconUrl: 'icons/icon-128.png',
+    title,
+    message,
+    buttons,
+  });
+}
+
+/**
+ * Show a fallback notification when chrome.action.openPopup() is unavailable
+ * or throws (e.g. non-standard window context).  Guides the user to open the
+ * extension popup manually.
+ */
+function showOpenPopupFallbackNotification() {
+  chrome.notifications.create('beam-open-popup', {
+    type:    'basic',
+    iconUrl: 'icons/icon-128.png',
+    title:   'Beam',
+    message: 'Click the Beam icon in the toolbar to open the device picker.',
+  });
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Fetch an image URL in the service worker context and return a transferable
