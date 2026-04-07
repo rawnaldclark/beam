@@ -49,6 +49,10 @@ export const MSG = Object.freeze({
   RELAY_RELEASE:      'relay-release',
   RELAY_DATA:         'relay-data',
 
+  // Pairing ceremony
+  PAIRING_REQUEST:    'pairing-request',
+  PAIRING_ACK:        'pairing-ack',
+
   // Session management
   RECONNECT:          'reconnect',
   ERROR:              'error',
@@ -147,6 +151,24 @@ const FIELD_RULES = new Map([
     if (!isNonEmptyString(msg.transferId))     return 'Missing or invalid field: transferId (must be a non-empty string)';
     if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
     if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+    return null;
+  }],
+
+  [MSG.PAIRING_REQUEST, (msg) => {
+    if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.deviceId))       return 'Missing or invalid field: deviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.ed25519Pk))      return 'Missing or invalid field: ed25519Pk (must be a non-empty string)';
+    if (!isNonEmptyString(msg.x25519Pk))       return 'Missing or invalid field: x25519Pk (must be a non-empty string)';
+    return null;
+  }],
+
+  [MSG.PAIRING_ACK, (msg) => {
+    if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.deviceId))       return 'Missing or invalid field: deviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.ed25519Pk))      return 'Missing or invalid field: ed25519Pk (must be a non-empty string)';
+    if (!isNonEmptyString(msg.x25519Pk))       return 'Missing or invalid field: x25519Pk (must be a non-empty string)';
     return null;
   }],
 

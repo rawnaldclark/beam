@@ -284,6 +284,22 @@ export const WIRE = Object.freeze({
   RELAY_DATA:          'relay-data',
 
   // -------------------------------------------------------------------------
+  // Pairing ceremony (relay-routed like SDP messages)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Client -> Server -> Peer: pairing request carrying the sender's public keys.
+   * Payload: { targetDeviceId, rendezvousId, deviceId, ed25519Pk, x25519Pk }
+   */
+  PAIRING_REQUEST:     'pairing-request',
+
+  /**
+   * Client -> Server -> Peer: pairing acknowledgement after SAS verification.
+   * Payload: { targetDeviceId, rendezvousId, deviceId, ed25519Pk, x25519Pk }
+   */
+  PAIRING_ACK:         'pairing-ack',
+
+  // -------------------------------------------------------------------------
   // Session management
   // -------------------------------------------------------------------------
 

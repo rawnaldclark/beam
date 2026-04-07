@@ -36,6 +36,8 @@ const SIGNALING_TYPES = new Set([
   MSG.SDP_OFFER,
   MSG.SDP_ANSWER,
   MSG.ICE_CANDIDATE,
+  MSG.PAIRING_REQUEST,
+  MSG.PAIRING_ACK,
 ]);
 
 // ---------------------------------------------------------------------------
