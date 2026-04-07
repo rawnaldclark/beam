@@ -28,6 +28,9 @@ import {
   startPINCountdown,
   displaySAS,
   createNamingForm,
+  waitForPairingRequest,
+  confirmPairing,
+  cancelPairingRelay,
 } from './pairing.js';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +76,20 @@ let pinTimerHandle = null;
 
 /** Toast dismiss timeout handle. */
 let toastHandle = null;
+
+/**
+ * Pending pairing result from the relay (emojis, peerId, peerKeys, sharedSecret).
+ * Populated by waitForPairingRequest(), consumed by the SAS confirm handler.
+ * @type {{emojis: string[], peerId: string, peerKeys: object, sharedSecret: number[]}|null}
+ */
+let pendingPairing = null;
+
+/**
+ * The deviceId used for the current pairing session.
+ * Needed by confirmPairing() to send the ACK.
+ * @type {string|null}
+ */
+let pairingDeviceId = null;
 
 // ---------------------------------------------------------------------------
 // DOM references (resolved after DOMContentLoaded)
@@ -373,15 +390,26 @@ function showView(name) {
 // ---------------------------------------------------------------------------
 
 /**
- * Initiate the pairing ceremony: ask the background SW to start pairing,
- * render the QR code, show the PIN with countdown, then switch to pairing view.
+ * Initiate the pairing ceremony: generate keys via Web Crypto, render the QR
+ * code, show the PIN with countdown, then connect to the relay and wait for
+ * the Android device's PAIRING_REQUEST.
+ *
+ * The entire pairing flow now runs in the popup (no offscreen dependency):
+ *   1. startPairing() generates Ed25519/X25519 keys and stores them.
+ *   2. QR is rendered so the Android app can scan it.
+ *   3. waitForPairingRequest() connects to the relay, authenticates, registers
+ *      the deviceId as rendezvous, and waits for the Android's pairing-request.
+ *   4. On receipt: X25519 ECDH + HKDF derives SAS emoji for verification.
+ *   5. User confirms SAS match -> confirmPairing() sends ACK and saves device.
  */
 async function showPairingView() {
-  // Clear any previous PIN timer.
+  // Clear any previous PIN timer and pending pairing state.
   if (pinTimerHandle) {
     clearInterval(pinTimerHandle);
     pinTimerHandle = null;
   }
+  pendingPairing = null;
+  pairingDeviceId = null;
 
   showView('pairing');
 
@@ -406,14 +434,14 @@ async function showPairingView() {
   }
 
   if (!qrData) {
-    // Background returned no payload — likely the offscreen doc isn't ready yet.
-    console.error('[Beam popup] qrData is null/undefined — offscreen not ready?');
+    console.error('[Beam popup] qrData is null/undefined — key generation failed');
     showToast('Pairing service unavailable. Try again in a moment.', 'error');
     showView('main');
     return;
   }
 
   console.log('[Beam popup] deviceId:', qrData.deviceId, 'length:', qrData.deviceId?.length);
+  pairingDeviceId = qrData.deviceId;
 
   // Render QR code into the container element.
   qrContainer.innerHTML = ''; // clear placeholder
@@ -434,27 +462,104 @@ async function showPairingView() {
     timerEl.textContent = 'Expired';
     showToast('PIN expired. Click Pair to generate a new code.');
   });
+
+  // ── Connect to relay and wait for Android's PAIRING_REQUEST ──────────────
+  // This runs concurrently with the PIN countdown. When Android scans the QR
+  // and sends its pairing-request via the relay, we derive the SAS emoji and
+  // transition to the verification view.
+  try {
+    const result = await waitForPairingRequest(qrData.deviceId);
+    pendingPairing = result;
+
+    // Clear the PIN timer — we no longer need it.
+    if (pinTimerHandle) {
+      clearInterval(pinTimerHandle);
+      pinTimerHandle = null;
+    }
+
+    // Show SAS verification view with derived emoji
+    displaySAS(el('sas-emojis'), result.emojis);
+    showView('sas');
+  } catch (err) {
+    console.error('[Beam popup] waitForPairingRequest failed:', err);
+    // Only show error if we are still on the pairing view (user may have cancelled)
+    if (!document.getElementById('view-pairing')?.classList.contains('hidden')) {
+      showToast('Pairing failed: ' + err.message, 'error');
+      showView('main');
+    }
+  }
 }
 
 /**
  * The user confirmed the SAS emoji match.
- * Send MSG.PAIRING_CONFIRM_SAS to the background/offscreen document.
+ *
+ * Sends PAIRING_ACK to Android via the relay, saves the paired device to
+ * storage, then transitions to the device naming view.
  */
 async function confirmSAS() {
-  try {
-    await chrome.runtime.sendMessage({ type: MSG.PAIRING_CONFIRM_SAS });
-  } catch (err) {
-    console.error('[Beam popup] confirmSAS failed:', err);
+  if (!pendingPairing || !pairingDeviceId) {
+    console.error('[Beam popup] confirmSAS called without pending pairing data');
+    showToast('Pairing state lost. Please try again.', 'error');
+    showView('main');
+    return;
   }
-  // The offscreen doc will send MSG.PAIRING_COMPLETE when naming is ready.
-  // We transition to the naming view when that message arrives (see handleMessage).
+
+  try {
+    await confirmPairing(
+      pendingPairing.peerId,
+      pendingPairing.peerKeys,
+      pairingDeviceId,
+    );
+  } catch (err) {
+    console.error('[Beam popup] confirmPairing failed:', err);
+    showToast('Could not complete pairing: ' + err.message, 'error');
+    showView('main');
+    pendingPairing = null;
+    pairingDeviceId = null;
+    return;
+  }
+
+  // Clear PIN timer if still running.
+  if (pinTimerHandle) {
+    clearInterval(pinTimerHandle);
+    pinTimerHandle = null;
+  }
+
+  // Show the device naming view.
+  showView('naming');
+  const suggestedName = 'Android Device';
+  createNamingForm(el('naming-container'), suggestedName, async ({ name, icon }) => {
+    // Update the paired device entry with the user-chosen name and icon.
+    try {
+      const stored = await chrome.storage.local.get(['pairedDevices']);
+      const devices = stored.pairedDevices || [];
+      const entry = devices.find(d => d.deviceId === pendingPairing.peerId);
+      if (entry) {
+        entry.name = name;
+        entry.icon = icon;
+        await chrome.storage.local.set({ pairedDevices: devices });
+      }
+    } catch (err) {
+      console.error('[Beam popup] Failed to update device name:', err);
+    }
+
+    pendingPairing = null;
+    pairingDeviceId = null;
+
+    await loadDevices();
+    showView('main');
+    showToast(`"${escapeHtml(name)}" paired successfully!`, 'success');
+  });
 }
 
 /**
  * The user clicked Cancel on the SAS view — abort the pairing ceremony.
+ * Disconnects the relay and clears pending state.
  */
 function cancelSAS() {
-  // No cancellation message in protocol spec; simply return to main.
+  cancelPairingRelay();
+  pendingPairing = null;
+  pairingDeviceId = null;
   showView('main');
   showToast('Pairing cancelled.');
 }
@@ -476,9 +581,12 @@ function setupEventListeners() {
     showToast('Settings coming soon.');
   });
 
-  // Pairing view: Cancel
+  // Pairing view: Cancel — disconnect relay and return to main.
   document.getElementById('btn-pairing-cancel')?.addEventListener('click', () => {
     if (pinTimerHandle) { clearInterval(pinTimerHandle); pinTimerHandle = null; }
+    cancelPairingRelay();
+    pendingPairing = null;
+    pairingDeviceId = null;
     showView('main');
   });
 

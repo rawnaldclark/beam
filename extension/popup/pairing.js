@@ -19,6 +19,7 @@
  */
 
 import { MSG } from '../shared/message-types.js';
+import { PairingRelayClient } from './relay-client.js';
 
 // ---------------------------------------------------------------------------
 // QR initiation
@@ -303,6 +304,291 @@ export function createNamingForm(container, suggestedName, onSubmit) {
 }
 
 // ---------------------------------------------------------------------------
+// SAS emoji table — 256 entries, MUST match Android's SAS_EMOJI_TABLE exactly
+// ---------------------------------------------------------------------------
+
+/**
+ * 256-emoji lookup table for Short Authentication String display.
+ * Sourced from PairingViewModel.kt (spec section 4.4.2).
+ * Each index maps to one emoji; 4 emoji are shown per pairing (8 bytes of
+ * HKDF output, 2 bytes per emoji, big-endian uint16 mod 256).
+ *
+ * DO NOT modify this table without updating the Android companion app.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+const SAS_EMOJI_TABLE = Object.freeze([
+  "\u{1F600}", "\u{1F602}", "\u{1F60D}", "\u{1F923}", "\u{1F60A}", "\u{1F60E}", "\u{1F929}", "\u{1F634}",
+  "\u{1F973}", "\u{1F608}", "\u{1F916}", "\u{1F47B}", "\u{1F480}", "\u{1F383}", "\u{1F648}", "\u{1F649}",
+  "\u{1F64A}", "\u{1F436}", "\u{1F431}", "\u{1F42D}", "\u{1F439}", "\u{1F430}", "\u{1F98A}", "\u{1F43B}",
+  "\u{1F43C}", "\u{1F428}", "\u{1F42F}", "\u{1F981}", "\u{1F42E}", "\u{1F437}", "\u{1F438}", "\u{1F435}",
+  "\u{1F414}", "\u{1F427}", "\u{1F426}", "\u{1F424}", "\u{1F986}", "\u{1F985}", "\u{1F989}", "\u{1F987}",
+  "\u{1F43A}", "\u{1F417}", "\u{1F434}", "\u{1F984}", "\u{1F41D}", "\u{1F41B}", "\u{1F98B}", "\u{1F40C}",
+  "\u{1F41E}", "\u{1F41C}", "\u{1F99F}", "\u{1F997}", "\u{1F982}", "\u{1F422}", "\u{1F40D}", "\u{1F98E}",
+  "\u{1F996}", "\u{1F995}", "\u{1F419}", "\u{1F991}", "\u{1F990}", "\u{1F99E}", "\u{1F980}", "\u{1F421}",
+  "\u{1F420}", "\u{1F41F}", "\u{1F42C}", "\u{1F433}", "\u{1F40B}", "\u{1F988}", "\u{1F40A}", "\u{1F405}",
+  "\u{1F406}", "\u{1F993}", "\u{1F98D}", "\u{1F9A7}", "\u{1F9A3}", "\u{1F418}", "\u{1F99B}", "\u{1F98F}",
+  "\u{1F42A}", "\u{1F42B}", "\u{1F992}", "\u{1F998}", "\u{1F9AC}", "\u{1F403}", "\u{1F402}", "\u{1F404}",
+  "\u{1F40E}", "\u{1F416}", "\u{1F40F}", "\u{1F411}", "\u{1F999}", "\u{1F410}", "\u{1F98C}", "\u{1F415}",
+  "\u{1F429}", "\u{1F9AE}", "\u{1F408}", "\u{1F413}", "\u{1F983}", "\u{1F9A4}", "\u{1F99A}", "\u{1F99C}",
+  "\u{1F9A2}", "\u{1F9A9}", "\u{1F54A}", "\u{1F407}", "\u{1F99D}", "\u{1F9A8}", "\u{1F9A1}", "\u{1F9AB}",
+  "\u{1F9A6}", "\u{1F9A5}", "\u{1F401}", "\u{1F400}", "\u{1F43F}", "\u{1F994}", "\u{1F335}", "\u{1F332}",
+  "\u{1F333}", "\u{1F334}", "\u{1F331}", "\u{1F33F}", "\u{2618}",  "\u{1F340}", "\u{1F38D}", "\u{1F38B}",
+  "\u{1F343}", "\u{1F342}", "\u{1F341}", "\u{1F344}", "\u{1F33E}", "\u{1F490}", "\u{1F337}", "\u{1F339}",
+  "\u{1F940}", "\u{1F33A}", "\u{1F338}", "\u{1F33C}", "\u{1F33B}", "\u{1F31E}", "\u{1F31D}", "\u{1F31B}",
+  "\u{1F31C}", "\u{1F31A}", "\u{1F315}", "\u{1F316}", "\u{1F317}", "\u{1F318}", "\u{1F311}", "\u{1F312}",
+  "\u{1F313}", "\u{1F314}", "\u{1F319}", "\u{1F31F}", "\u{2B50}",  "\u{1F320}", "\u{1F30C}", "\u{2601}",
+  "\u{26C5}",  "\u{1F324}", "\u{1F308}", "\u{26A1}",  "\u{2744}",  "\u{1F525}", "\u{1F4A7}", "\u{1F30A}",
+  "\u{1F34F}", "\u{1F34E}", "\u{1F350}", "\u{1F34A}", "\u{1F34B}", "\u{1F34C}", "\u{1F349}", "\u{1F347}",
+  "\u{1F353}", "\u{1FAD0}", "\u{1F348}", "\u{1F352}", "\u{1F351}", "\u{1F96D}", "\u{1F34D}", "\u{1F965}",
+  "\u{1F95D}", "\u{1F345}", "\u{1F346}", "\u{1F951}", "\u{1F966}", "\u{1F96C}", "\u{1F952}", "\u{1F336}",
+  "\u{1FAD1}", "\u{1F9C4}", "\u{1F9C5}", "\u{1F954}", "\u{1F360}", "\u{1F950}", "\u{1F96F}", "\u{1F35E}",
+  "\u{1F956}", "\u{1F968}", "\u{1F9C0}", "\u{1F95A}", "\u{1F373}", "\u{1F9C8}", "\u{1F95E}", "\u{1F9C7}",
+  "\u{1F953}", "\u{1F969}", "\u{1F357}", "\u{1F356}", "\u{1F9B4}", "\u{1F32D}", "\u{1F354}", "\u{1F35F}",
+  "\u{1F355}", "\u{1F32E}", "\u{1F32F}", "\u{1FAD4}", "\u{1F959}", "\u{1F9C6}", "\u{1F95A}", "\u{1F37F}",
+  "\u{1F9C2}", "\u{1F96B}", "\u{1F371}", "\u{1F358}", "\u{1F359}", "\u{1F35A}", "\u{1F35B}", "\u{1F35C}",
+  "\u{1F35D}", "\u{1F360}", "\u{1F362}", "\u{1F363}", "\u{1F364}", "\u{1F365}", "\u{1F96E}", "\u{1F361}",
+  "\u{1F95F}", "\u{1F9AA}", "\u{1F366}", "\u{1F367}", "\u{1F368}", "\u{1F369}", "\u{1F36A}", "\u{1F382}",
+  "\u{1F370}", "\u{1F9C1}", "\u{1F967}", "\u{1F36B}", "\u{1F36C}", "\u{1F36D}", "\u{1F36E}", "\u{1F36F}",
+]);
+
+// ---------------------------------------------------------------------------
+// Relay connection for pairing ceremony
+// ---------------------------------------------------------------------------
+
+/** @type {PairingRelayClient|null} */
+let _relayClient = null;
+
+/** @type {CryptoKeyPair|null} In-memory Ed25519 key pair (never exported raw). */
+let _ed25519KeyPair = null;
+
+/** @type {CryptoKeyPair|null} In-memory X25519 key pair for ECDH. */
+let _x25519KeyPair = null;
+
+/**
+ * Connect to the relay after QR is displayed, then wait for the Android
+ * device's PAIRING_REQUEST message.
+ *
+ * Steps:
+ *  1. Re-import Ed25519 and X25519 key pairs from chrome.storage.local (PKCS8).
+ *  2. Connect to relay, authenticate with Ed25519.
+ *  3. Register our deviceId as rendezvous so the relay routes Android's message.
+ *  4. Wait for 'pairing-request' from Android (up to 60 s).
+ *  5. Perform X25519 ECDH, derive SAS via HKDF, map to 4 emoji.
+ *
+ * @param {string} deviceId - Our device ID (displayed in QR, used as rendezvous).
+ * @returns {Promise<{emojis: string[], peerId: string, peerKeys: {ed25519Pk: number[], x25519Pk: number[]}, sharedSecret: number[]}>}
+ * @throws {Error} On timeout, auth failure, or crypto failure.
+ */
+export async function waitForPairingRequest(deviceId) {
+  const stored = await chrome.storage.local.get(['deviceKeys']);
+
+  if (!stored.deviceKeys) {
+    throw new Error('Device keys not found in storage. Call startPairing() first.');
+  }
+
+  // Import Ed25519 key pair for relay authentication
+  const ed25519PrivateKey = await crypto.subtle.importKey(
+    'pkcs8',
+    new Uint8Array(stored.deviceKeys.ed25519.sk).buffer,
+    'Ed25519',
+    false,
+    ['sign'],
+  );
+  const ed25519PublicKey = await crypto.subtle.importKey(
+    'raw',
+    new Uint8Array(stored.deviceKeys.ed25519.pk).buffer,
+    'Ed25519',
+    true,
+    ['verify'],
+  );
+  _ed25519KeyPair = { privateKey: ed25519PrivateKey, publicKey: ed25519PublicKey };
+
+  // Import X25519 key pair for ECDH key exchange
+  const x25519PrivateKey = await crypto.subtle.importKey(
+    'pkcs8',
+    new Uint8Array(stored.deviceKeys.x25519.sk).buffer,
+    'X25519',
+    false,
+    ['deriveBits'],
+  );
+  const x25519PublicKey = await crypto.subtle.importKey(
+    'raw',
+    new Uint8Array(stored.deviceKeys.x25519.pk).buffer,
+    'X25519',
+    true,
+    [],
+  );
+  _x25519KeyPair = { privateKey: x25519PrivateKey, publicKey: x25519PublicKey };
+
+  // Connect to relay and authenticate
+  _relayClient = new PairingRelayClient();
+  await _relayClient.connect(deviceId, _ed25519KeyPair);
+  console.log('[Beam] Connected to relay for pairing');
+
+  // Register our deviceId as rendezvous (Android uses this to route to us)
+  _relayClient.registerRendezvous([deviceId]);
+
+  // Wait for PAIRING_REQUEST from Android
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      _relayClient?.disconnect();
+      reject(new Error('Pairing request timeout (60s)'));
+    }, 60000);
+
+    _relayClient.on('pairing-request', async (msg) => {
+      clearTimeout(timeout);
+
+      const peerId = msg.fromDeviceId || msg.deviceId;
+      console.log('[Beam] Received PAIRING_REQUEST from', peerId);
+
+      try {
+        const peerX25519PkRaw = base64ToBytes(msg.x25519Pk);
+        const peerEd25519PkRaw = base64ToBytes(msg.ed25519Pk);
+
+        // X25519 ECDH: derive 256-bit shared secret
+        const peerX25519Pk = await crypto.subtle.importKey(
+          'raw',
+          peerX25519PkRaw.buffer,
+          'X25519',
+          false,
+          [],
+        );
+        const sharedBits = await crypto.subtle.deriveBits(
+          { name: 'X25519', public: peerX25519Pk },
+          _x25519KeyPair.privateKey,
+          256,
+        );
+        const sharedSecret = new Uint8Array(sharedBits);
+
+        // SAS derivation (spec section 4.4.2):
+        //   salt = chrome_ed25519_pk (32B) || android_ed25519_pk (32B)
+        // Android does: salt = payload.ed25519Pk + ourKeys.ed25519Pk
+        //   where payload.ed25519Pk = chrome's pk (from QR), ourKeys = android's pk.
+        // Chrome must use the same order: our_pk || peer_pk.
+        const ourEd25519Pk = new Uint8Array(stored.deviceKeys.ed25519.pk);
+        const salt = new Uint8Array(ourEd25519Pk.length + peerEd25519PkRaw.length);
+        salt.set(ourEd25519Pk);
+        salt.set(peerEd25519PkRaw, ourEd25519Pk.length);
+
+        // HKDF-SHA256(ikm=sharedSecret, salt=salt, info="zaptransfer-sas-v1", len=8)
+        const hkdfKey = await crypto.subtle.importKey(
+          'raw',
+          sharedSecret,
+          'HKDF',
+          false,
+          ['deriveBits'],
+        );
+        const sasBits = await crypto.subtle.deriveBits(
+          {
+            name: 'HKDF',
+            hash: 'SHA-256',
+            salt: salt,
+            info: new TextEncoder().encode('zaptransfer-sas-v1'),
+          },
+          hkdfKey,
+          64, // 8 bytes = 64 bits
+        );
+        const sasBytes = new Uint8Array(sasBits);
+
+        // Map 8 SAS bytes to 4 emoji (2 bytes per emoji, big-endian uint16 mod 256)
+        const emojis = sasToEmoji(sasBytes);
+
+        resolve({
+          emojis,
+          peerId,
+          peerKeys: {
+            ed25519Pk: Array.from(peerEd25519PkRaw),
+            x25519Pk: Array.from(peerX25519PkRaw),
+          },
+          sharedSecret: Array.from(sharedSecret),
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+/**
+ * Send PAIRING_ACK back to Android after the user confirms the SAS emoji match,
+ * then save the paired device to chrome.storage.local.
+ *
+ * @param {string} peerId - The Android device's ID.
+ * @param {{ed25519Pk: number[], x25519Pk: number[]}} peerKeys - Android's public keys.
+ * @param {string} deviceId - Our (Chrome) device ID.
+ * @returns {Promise<void>}
+ */
+export async function confirmPairing(peerId, peerKeys, deviceId) {
+  // Send acknowledgement to Android via relay
+  if (_relayClient?.isConnected) {
+    const stored = await chrome.storage.local.get(['deviceKeys']);
+    _relayClient.send({
+      type:           'pairing-ack',
+      targetDeviceId: peerId,
+      rendezvousId:   deviceId,
+      deviceId:       deviceId,
+      ed25519Pk:      bytesToBase64(new Uint8Array(stored.deviceKeys.ed25519.pk)),
+      x25519Pk:       bytesToBase64(new Uint8Array(stored.deviceKeys.x25519.pk)),
+    });
+  }
+
+  // Save paired device to storage
+  const stored = await chrome.storage.local.get(['pairedDevices']);
+  const devices = stored.pairedDevices || [];
+  devices.push({
+    deviceId:        peerId,
+    name:            'Android Device', // User will rename in the naming step
+    icon:            'phone',
+    ed25519PublicKey: peerKeys.ed25519Pk,
+    x25519PublicKey:  peerKeys.x25519Pk,
+    pairedAt:        Date.now(),
+  });
+  await chrome.storage.local.set({ pairedDevices: devices });
+
+  // Clean up relay connection
+  _relayClient?.disconnect();
+  _relayClient = null;
+  _ed25519KeyPair = null;
+  _x25519KeyPair = null;
+}
+
+/**
+ * Disconnect the pairing relay client without completing pairing.
+ * Called when the user cancels pairing or navigates away.
+ */
+export function cancelPairingRelay() {
+  _relayClient?.disconnect();
+  _relayClient = null;
+  _ed25519KeyPair = null;
+  _x25519KeyPair = null;
+}
+
+/**
+ * Convert 8 raw SAS bytes to 4 emoji using the SAS_EMOJI_TABLE.
+ *
+ * Each pair of bytes is treated as a big-endian uint16, then taken modulo 256
+ * to index into the 256-entry table. This matches the Android deriveSasEmoji().
+ *
+ * @param {Uint8Array} sasBytes - Exactly 8 bytes of HKDF-derived SAS material.
+ * @returns {string[]} Array of 4 emoji strings.
+ */
+function sasToEmoji(sasBytes) {
+  if (sasBytes.length !== 8) {
+    throw new Error(`SAS bytes must be 8, got ${sasBytes.length}`);
+  }
+
+  const emojis = [];
+  for (let i = 0; i < 4; i++) {
+    const high = sasBytes[i * 2];
+    const low = sasBytes[i * 2 + 1];
+    const index = ((high << 8) | low) % 256;
+    emojis.push(SAS_EMOJI_TABLE[index]);
+  }
+  return emojis;
+}
+
+// ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
 
@@ -321,4 +607,24 @@ function arrayToBase64(arr) {
     return btoa(String.fromCharCode(...arr));
   }
   return btoa(String.fromCharCode(...new Uint8Array(arr)));
+}
+
+/**
+ * Decode a standard base64 string to a Uint8Array.
+ *
+ * @param {string} b64 - Base64-encoded string.
+ * @returns {Uint8Array}
+ */
+function base64ToBytes(b64) {
+  return new Uint8Array(atob(b64).split('').map(c => c.charCodeAt(0)));
+}
+
+/**
+ * Encode a Uint8Array to a standard base64 string.
+ *
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+function bytesToBase64(bytes) {
+  return btoa(String.fromCharCode(...bytes));
 }
