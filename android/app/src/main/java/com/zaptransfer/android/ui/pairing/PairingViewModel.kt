@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.security.MessageDigest
 import javax.inject.Inject
 
 private const val TAG = "PairingViewModel"
@@ -425,6 +426,7 @@ class PairingViewModel @Inject constructor(
      */
     private suspend fun performKeyExchangeAndDeriveSas(payload: PeerPayload) {
         val ourKeys = keyManager.getOrCreateKeys()
+        val ourDeviceId = keyManager.deriveDeviceId(ourKeys.ed25519Pk)
 
         // X25519 ECDH — raw shared secret (must be processed through HKDF before use)
         val rawShared = keyManager.deriveSharedSecret(ourKeys.x25519Sk, payload.x25519Pk)
@@ -439,6 +441,32 @@ class PairingViewModel @Inject constructor(
         val sas = deriveSasEmoji(sasBytes)
 
         Log.d(TAG, "Key exchange complete; SAS derived: ${sas.emoji}")
+
+        // Connect to relay and send PAIRING_REQUEST so Chrome receives our keys.
+        // Use the Chrome device's deviceId as the rendezvous point for pairing
+        // (both sides register it so the relay can route between them).
+        try {
+            ensureRelayConnected(payload.relayUrl)
+
+            // Register the Chrome deviceId as rendezvous so we share a room
+            signalingClient.registerRendezvous(listOf(payload.deviceId))
+
+            // Send PAIRING_REQUEST carrying our public keys to the Chrome peer
+            val pairingRequest = JSONObject().apply {
+                put("type", "pairing-request")
+                put("targetDeviceId", payload.deviceId)
+                put("rendezvousId", payload.deviceId)
+                put("deviceId", ourDeviceId)
+                put("ed25519Pk", Base64.encodeToString(ourKeys.ed25519Pk, Base64.NO_WRAP))
+                put("x25519Pk", Base64.encodeToString(ourKeys.x25519Pk, Base64.NO_WRAP))
+            }
+            signalingClient.send(pairingRequest)
+            Log.d(TAG, "PAIRING_REQUEST sent to ${payload.deviceId}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send PAIRING_REQUEST (non-fatal): ${e.message}", e)
+            // Non-fatal: SAS verification can still proceed; the Chrome side
+            // may receive the request on a retry or the user can re-scan.
+        }
 
         _uiState.value = PairingUiState.Verifying(
             peerPayload = payload,
@@ -476,11 +504,11 @@ class PairingViewModel @Inject constructor(
      *
      * @throws IllegalStateException if the relay does not connect within 5 seconds.
      */
-    private suspend fun ensureRelayConnected() {
+    private suspend fun ensureRelayConnected(relayUrl: String = com.zaptransfer.android.webrtc.RELAY_URL) {
         val state = signalingClient.connectionState.value
         if (state is ConnectionState.Connected) return
 
-        signalingClient.connect()
+        signalingClient.connect(relayUrl)
 
         // Wait for up to 5 seconds for auth to complete
         var waited = 0

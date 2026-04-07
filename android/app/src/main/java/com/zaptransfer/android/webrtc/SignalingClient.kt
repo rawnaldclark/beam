@@ -248,6 +248,21 @@ class SignalingClient @Inject constructor(
     }
 
     /**
+     * Registers rendezvous IDs with the relay so it can route messages between
+     * paired devices sharing those IDs.
+     *
+     * @param rendezvousIds List of rendezvous ID strings to register.
+     * @return true if the message was enqueued; false if the socket is unavailable.
+     */
+    fun registerRendezvous(rendezvousIds: List<String>): Boolean {
+        val msg = JSONObject().apply {
+            put("type", "register-rendezvous")
+            put("rendezvousIds", org.json.JSONArray(rendezvousIds))
+        }
+        return send(msg)
+    }
+
+    /**
      * Cancels all coroutines and closes the OkHttp connection pool.
      * Must be called when the owning component (service / ViewModel) is destroyed.
      */
@@ -361,7 +376,7 @@ class SignalingClient @Inject constructor(
                     type == "challenge" -> handleAuthChallenge(webSocket, json)
 
                     // Server confirms successful authentication
-                    type == "auth_ok" -> {
+                    type == "auth-ok" -> {
                         Log.d(TAG, "Auth confirmed by relay; connection active")
                         _connectionState.value = ConnectionState.Connected
                         reconnectAttempt.set(0)  // reset backoff on successful auth
@@ -444,8 +459,8 @@ class SignalingClient @Inject constructor(
 
                 // Timestamp is included in the signed payload to prevent replay attacks.
                 // Server rejects timestamps more than 30 seconds old (spec §4.2).
-                val timestamp = java.time.Instant.now().toString()  // ISO-8601 UTC
-                val timestampBytes = timestamp.toByteArray(Charsets.UTF_8)
+                val timestamp = System.currentTimeMillis()
+                val timestampBytes = timestamp.toString().toByteArray(Charsets.UTF_8)
 
                 // Sign challenge || timestamp (concatenation, no delimiter)
                 val messageToSign = challengeBytes + timestampBytes
@@ -454,15 +469,9 @@ class SignalingClient @Inject constructor(
                 val response = JSONObject().apply {
                     put("type", "auth")
                     put("deviceId", deviceId)
-                    put(
-                        "publicKey",
-                        Base64.encodeToString(keys.ed25519Pk, Base64.NO_WRAP)
-                    )
-                    put(
-                        "signature",
-                        Base64.encodeToString(signature, Base64.NO_WRAP)
-                    )
-                    put("timestamp", timestamp)
+                    put("publicKey", Base64.encodeToString(keys.ed25519Pk, Base64.NO_WRAP))
+                    put("signature", Base64.encodeToString(signature, Base64.NO_WRAP))
+                    put("timestamp", timestamp)  // numeric ms since epoch
                 }
 
                 webSocket.send(response.toString())
