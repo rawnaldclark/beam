@@ -129,15 +129,30 @@ async function startup() {
   // Step 1: wait for libsodium WASM
   await initCrypto();
 
-  // Step 2: load or generate device keys
-  const stored = await chrome.storage.local.get(['deviceKeys', 'deviceId', 'pairedDevices']);
+  // Step 2: load device keys from storage.
+  // NOTE: chrome.storage may not be available in offscreen documents.
+  // If so, request keys from the service worker via messaging.
+  let stored = {};
+  try {
+    if (chrome?.storage?.local) {
+      stored = await chrome.storage.local.get(['deviceKeys', 'deviceId', 'pairedDevices']);
+    } else {
+      // Offscreen can't access storage — ask SW to read it for us
+      console.log('[Beam] chrome.storage not available in offscreen, requesting via SW...');
+      stored = await _requestStorageFromSW(['deviceKeys', 'deviceId', 'pairedDevices']);
+    }
+  } catch (e) {
+    console.warn('[Beam] Storage access failed, trying SW relay:', e.message);
+    try {
+      stored = await _requestStorageFromSW(['deviceKeys', 'deviceId', 'pairedDevices']);
+    } catch (e2) {
+      console.error('[Beam] SW storage relay also failed:', e2.message);
+    }
+  }
 
-  // Validate stored deviceId — must be 22 chars (base64url of 16 bytes).
-  // A bad value (e.g., from a prior Buffer bug) forces regeneration.
   const storedIdValid = stored.deviceId && stored.deviceId.length >= 16;
 
   if (stored.deviceKeys && storedIdValid) {
-    // Restore persisted keys — storage holds plain Arrays, convert back to Uint8Array.
     deviceKeys = {
       x25519: {
         pk: new Uint8Array(stored.deviceKeys.x25519.pk),
@@ -149,28 +164,12 @@ async function startup() {
       },
     };
     deviceId = stored.deviceId;
-  } else if (stored.deviceKeys) {
-    // Keys exist but deviceId was bad — re-derive from existing keys
-    deviceKeys = {
-      x25519: {
-        pk: new Uint8Array(stored.deviceKeys.x25519.pk),
-        sk: new Uint8Array(stored.deviceKeys.x25519.sk),
-      },
-      ed25519: {
-        pk: new Uint8Array(stored.deviceKeys.ed25519.pk),
-        sk: new Uint8Array(stored.deviceKeys.ed25519.sk),
-      },
-    };
-    deviceId = deriveDeviceId(deviceKeys.ed25519.pk);
-    await chrome.storage.local.set({ deviceId });
-    console.log('[Beam] Re-derived deviceId from existing keys:', deviceId);
   } else {
-    // First run — generate fresh key pairs and persist them.
+    // Keys not in storage yet — generate with libsodium and store via SW
     deviceKeys = generateKeyPairs();
     deviceId   = deriveDeviceId(deviceKeys.ed25519.pk);
 
-    await chrome.storage.local.set({
-      // Serialise Uint8Arrays as plain Arrays for JSON storage.
+    const keysToStore = {
       deviceKeys: {
         x25519: {
           pk: Array.from(deviceKeys.x25519.pk),
@@ -182,7 +181,17 @@ async function startup() {
         },
       },
       deviceId,
-    });
+    };
+
+    try {
+      if (chrome?.storage?.local) {
+        await chrome.storage.local.set(keysToStore);
+      } else {
+        await _setStorageViaSW(keysToStore);
+      }
+    } catch (e) {
+      console.warn('[Beam] Failed to persist keys:', e.message);
+    }
   }
 
   // Step 3: load paired device list
@@ -586,13 +595,17 @@ async function connectRelay() {
  * @returns {Promise<void>}
  */
 async function updatePresence(peerId, isOnline) {
-  // chrome.storage.session.get() always returns an object; the key is absent
-  // (not null/undefined) when it has never been written.
-  const stored   = await chrome.storage.session.get('devicePresence');
-  const presence = stored.devicePresence ?? {};
+  // chrome.storage.session may not be available in offscreen documents.
+  // Use in-memory presence tracking instead.
+  if (!updatePresence._cache) updatePresence._cache = {};
+  updatePresence._cache[peerId] = { isOnline, lastSeen: Date.now() };
 
-  presence[peerId] = { isOnline, lastSeen: Date.now() };
-  await chrome.storage.session.set({ devicePresence: presence });
+  // Try to persist to session storage (works in some Chrome versions)
+  try {
+    if (chrome?.storage?.session) {
+      await chrome.storage.session.set({ devicePresence: updatePresence._cache });
+    }
+  } catch (_) { /* ignore — in-memory cache is sufficient */ }
 
   // Annotate the in-memory paired list with live presence state and forward
   // to the service worker.  The SW uses this to update context menu items.
@@ -982,6 +995,25 @@ function _base64ToArray(b64) {
   return Array.from(new Uint8Array(
     [...atob(b64)].map(c => c.charCodeAt(0)),
   ));
+}
+
+// ---------------------------------------------------------------------------
+// Storage relay helpers (offscreen → SW → chrome.storage)
+// ---------------------------------------------------------------------------
+
+async function _requestStorageFromSW(keys) {
+  const response = await chrome.runtime.sendMessage({
+    type: 'STORAGE_GET',
+    payload: { keys },
+  });
+  return response?.data || {};
+}
+
+async function _setStorageViaSW(data) {
+  await chrome.runtime.sendMessage({
+    type: 'STORAGE_SET',
+    payload: { data },
+  });
 }
 
 // ---------------------------------------------------------------------------

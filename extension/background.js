@@ -117,6 +117,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       rebuildContextMenus(msg.payload.devices ?? []);
       break;
 
+    // ── Storage relay for offscreen document (which can't access chrome.storage) ──
+    case 'STORAGE_GET':
+      chrome.storage.local.get(msg.payload.keys).then(data => {
+        sendResponse({ data });
+      });
+      return true; // async
+
+    case 'STORAGE_SET':
+      chrome.storage.local.set(msg.payload.data).then(() => {
+        sendResponse({ ok: true });
+      });
+      return true; // async
+
     // ── Image fetch — must happen in SW (cross-origin fetch allowed here) ───
     case MSG.FETCH_IMAGE:
       fetchImageForOffscreen(msg.payload.url)

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html><head><title>API Test</title></head>
+<body>
+<pre id="out">Testing...</pre>
+<script>
+const o = document.getElementById('out');
+o.textContent = '';
+o.textContent += 'chrome: ' + (typeof chrome) + '\n';
+o.textContent += 'chrome.storage: ' + (typeof chrome?.storage) + '\n';
+o.textContent += 'chrome.storage.local: ' + (typeof chrome?.storage?.local) + '\n';
+o.textContent += 'chrome.runtime: ' + (typeof chrome?.runtime) + '\n';
+o.textContent += 'chrome.runtime.sendMessage: ' + (typeof chrome?.runtime?.sendMessage) + '\n';
+o.textContent += 'crypto.subtle: ' + (typeof crypto?.subtle) + '\n';
+o.textContent += 'WebAssembly: ' + (typeof WebAssembly) + '\n';
+</script>
+</body>
+</html>
