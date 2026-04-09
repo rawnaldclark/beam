@@ -133,12 +133,18 @@ fun BeamNavGraph(
             )
         }
 
-        // ── Pairing: QR scanner ──────────────────────────────────────────────
-        // The PairingViewModel is scoped to this back stack entry so that all
-        // downstream pairing screens (PIN, verify, naming) share the same instance
-        // by retrieving it via navController.getBackStackEntry(ROUTE_PAIRING_SCAN).
-        composable(ROUTE_PAIRING_SCAN) { entry ->
-            val viewModel: PairingViewModel = hiltViewModel(entry)
+        // ── Pairing flow ─────────────────────────────────────────────────────
+        // All pairing screens share ONE PairingViewModel instance scoped to the
+        // navController's ViewModelStoreOwner (the Activity). This avoids the
+        // back-stack scoping issues that caused crashes and blank screens.
+        //
+        // Using `hiltViewModel(navController.getViewModelStoreOwner())` is the
+        // recommended pattern for multi-screen flows that share state.
+
+        composable(ROUTE_PAIRING_SCAN) {
+            val viewModel: PairingViewModel = hiltViewModel(
+                navController.getViewModelStoreOwner(navController.graph.id)
+            )
             QrScannerScreen(
                 viewModel = viewModel,
                 onNavigateToVerify = { navController.navigate(ROUTE_PAIRING_VERIFY) },
@@ -147,11 +153,10 @@ fun BeamNavGraph(
             )
         }
 
-        // ── Pairing: PIN entry ───────────────────────────────────────────────
-        // Shares PairingViewModel scoped to the scan entry so state is continuous.
         composable(ROUTE_PAIRING_PIN) {
-            val scanEntry = try { navController.getBackStackEntry(ROUTE_PAIRING_SCAN) } catch (_: Exception) { null }
-            val viewModel: PairingViewModel = if (scanEntry != null) hiltViewModel(scanEntry) else hiltViewModel()
+            val viewModel: PairingViewModel = hiltViewModel(
+                navController.getViewModelStoreOwner(navController.graph.id)
+            )
             PinEntryScreen(
                 viewModel = viewModel,
                 onNavigateToVerify = { navController.navigate(ROUTE_PAIRING_VERIFY) },
@@ -159,33 +164,24 @@ fun BeamNavGraph(
             )
         }
 
-        // ── Pairing: SAS verification ────────────────────────────────────────
-        // No nav arguments needed — peerPayload is held in PairingViewModel.Verifying state.
         composable(ROUTE_PAIRING_VERIFY) {
-            val scanEntry = try { navController.getBackStackEntry(ROUTE_PAIRING_SCAN) } catch (_: Exception) { null }
-            val viewModel: PairingViewModel = if (scanEntry != null) hiltViewModel(scanEntry) else hiltViewModel()
+            val viewModel: PairingViewModel = hiltViewModel(
+                navController.getViewModelStoreOwner(navController.graph.id)
+            )
             SasVerificationScreen(
                 viewModel = viewModel,
-                onNavigateToNaming = {
-                    navController.navigate(ROUTE_PAIRING_NAME) {
-                        // Pop verify off the back stack — user cannot go back to SAS after naming
-                        popUpTo(ROUTE_PAIRING_SCAN) { inclusive = false }
-                    }
-                },
+                onNavigateToNaming = { navController.navigate(ROUTE_PAIRING_NAME) },
                 onBack = { navController.popBackStack() },
             )
         }
 
-        // ── Pairing: device naming ───────────────────────────────────────────
-        // No nav arguments needed — deviceId is held in PairingViewModel.Naming state.
         composable(ROUTE_PAIRING_NAME) {
-            // Use own back stack entry for ViewModel — avoids crash when pairing/scan
-            // is already popped from the stack after navigation completes.
-            val viewModel: PairingViewModel = hiltViewModel()
+            val viewModel: PairingViewModel = hiltViewModel(
+                navController.getViewModelStoreOwner(navController.graph.id)
+            )
             DeviceNamingScreen(
                 viewModel = viewModel,
                 onNavigateToHub = {
-                    // After naming, clear the entire pairing back stack and return to hub
                     navController.navigate(ROUTE_DEVICE_HUB) {
                         popUpTo(ROUTE_DEVICE_HUB) { inclusive = false }
                     }
