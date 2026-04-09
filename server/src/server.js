@@ -334,10 +334,12 @@ gateway.onMessage((deviceId, msg, ws) => {
       presence.register(deviceId, msg.rendezvousIds);
       break;
 
-    // WebRTC signaling — Signaling.handleMessage() returns true when handled.
+    // WebRTC signaling + pairing — Signaling.handleMessage() returns true when handled.
     case MSG.SDP_OFFER:
     case MSG.SDP_ANSWER:
     case MSG.ICE_CANDIDATE:
+    case MSG.PAIRING_REQUEST:
+    case MSG.PAIRING_ACK:
       signaling.handleMessage(deviceId, msg, ws);
       break;
 
