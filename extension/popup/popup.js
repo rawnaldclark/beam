@@ -117,10 +117,33 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadTransferHistory();
   await loadClipboardHistory();
   await loadReceivedFile();
+  await consumeAutoCopyPending();
   setupEventListeners();
   listenForStorageChanges();
   startKeepalive();
 });
+
+/**
+ * Check for and consume any pending auto-copy clipboard content.
+ *
+ * When the service worker receives clipboard content with auto-copy ON,
+ * it cannot write to the clipboard from the SW context. Instead it sets
+ * an autoCopyPending key in session storage. When the popup opens, we
+ * consume it and write to the clipboard.
+ *
+ * @returns {Promise<void>}
+ */
+async function consumeAutoCopyPending() {
+  try {
+    const stored = await chrome.storage.session.get('autoCopyPending');
+    if (stored?.autoCopyPending) {
+      await navigator.clipboard.writeText(stored.autoCopyPending);
+      await chrome.storage.session.remove('autoCopyPending');
+    }
+  } catch {
+    // Clipboard write may fail if popup is not focused; ignore silently.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Storage loaders
@@ -468,7 +491,7 @@ function renderReceivedFile(file) {
  * @param {'main'|'pairing'|'sas'|'naming'} name
  */
 function showView(name) {
-  const ids = ['view-main', 'view-pairing', 'view-sas', 'view-naming'];
+  const ids = ['view-main', 'view-pairing', 'view-sas', 'view-naming', 'view-settings'];
   ids.forEach(id => document.getElementById(id)?.classList.add('hidden'));
   document.getElementById(`view-${name}`)?.classList.remove('hidden');
 }
@@ -672,10 +695,20 @@ function setupEventListeners() {
   // Empty state: Pair first device button
   document.getElementById('btn-pair-first')?.addEventListener('click', showPairingView);
 
-  // Header: Settings (placeholder — no settings view yet)
-  document.getElementById('btn-settings')?.addEventListener('click', () => {
-    showToast('Settings coming soon.');
+  // Header: Settings — open settings view
+  document.getElementById('btn-settings')?.addEventListener('click', showSettingsView);
+
+  // Settings view: Back button
+  document.getElementById('settings-back')?.addEventListener('click', () => {
+    showView('main');
   });
+
+  // Settings view: auto-save checkboxes on change
+  document.getElementById('setting-auto-copy')?.addEventListener('change', saveSettings);
+  document.getElementById('setting-auto-save')?.addEventListener('change', saveSettings);
+
+  // Settings view: device name on blur
+  document.getElementById('setting-device-name')?.addEventListener('blur', saveSettings);
 
   // Pairing view: Cancel — disconnect relay and return to main.
   document.getElementById('btn-pairing-cancel')?.addEventListener('click', () => {
@@ -860,6 +893,19 @@ function handleMessage(msg) {
       showToast(
         `Receiving "${escapeHtml(fileName ?? 'file')}" (${formatBytes(fileSize)}) from ${escapeHtml(fromDeviceName ?? 'device')}…`
       );
+      break;
+    }
+
+    // ── Auto-copy clipboard from SW ────────────────────────────────────────
+    case 'AUTO_COPY_CLIPBOARD': {
+      const autoCopyContent = msg.payload?.content;
+      if (autoCopyContent) {
+        navigator.clipboard.writeText(autoCopyContent).then(() => {
+          chrome.storage.session.remove('autoCopyPending');
+        }).catch(() => {
+          // Will be consumed next time popup opens via consumeAutoCopyPending.
+        });
+      }
       break;
     }
 
@@ -1196,6 +1242,106 @@ function handleClipboardResend(e) {
   }).catch(err => showToast(`Resend failed: ${err.message}`, 'error'));
 
   showToast('Clipboard item resent!', 'success');
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+/**
+ * Load settings from chrome.storage.local, populate the settings form, render
+ * the paired devices list, and switch to the settings view.
+ *
+ * Settings schema in chrome.storage.local:
+ *   settings: { autoCopy: boolean, autoSave: boolean, deviceName: string }
+ *
+ * @returns {Promise<void>}
+ */
+async function showSettingsView() {
+  const stored = await chrome.storage.local.get(['settings', 'pairedDevices']);
+  const settings = stored.settings ?? { autoCopy: true, autoSave: false, deviceName: 'Chrome' };
+  const devices = stored.pairedDevices ?? [];
+
+  // Populate form controls
+  const autoCopyEl = document.getElementById('setting-auto-copy');
+  const autoSaveEl = document.getElementById('setting-auto-save');
+  const nameEl = document.getElementById('setting-device-name');
+
+  if (autoCopyEl) autoCopyEl.checked = settings.autoCopy !== false;
+  if (autoSaveEl) autoSaveEl.checked = !!settings.autoSave;
+  if (nameEl) nameEl.value = settings.deviceName || 'Chrome';
+
+  // Render paired devices list
+  renderSettingsPairedDevices(devices);
+
+  showView('settings');
+}
+
+/**
+ * Read current form values and persist them to chrome.storage.local.
+ *
+ * Called on checkbox change and device name blur so settings auto-save
+ * without requiring a "Save" button.
+ *
+ * @returns {Promise<void>}
+ */
+async function saveSettings() {
+  const autoCopy = document.getElementById('setting-auto-copy')?.checked ?? true;
+  const autoSave = document.getElementById('setting-auto-save')?.checked ?? false;
+  const deviceName = (document.getElementById('setting-device-name')?.value || 'Chrome').trim().slice(0, 30) || 'Chrome';
+
+  await chrome.storage.local.set({
+    settings: { autoCopy, autoSave, deviceName },
+  });
+}
+
+/**
+ * Render the list of paired devices inside the settings view with unpair buttons.
+ *
+ * @param {Array<{deviceId: string, name: string, icon: string}>} devices
+ */
+function renderSettingsPairedDevices(devices) {
+  const container = document.getElementById('settings-paired-devices');
+  if (!container) return;
+
+  if (!devices.length) {
+    container.innerHTML = '<div class="empty-list-msg">No paired devices</div>';
+    return;
+  }
+
+  container.innerHTML = devices.map(d => {
+    const icon = ICON_MAP[d.icon] ?? '\uD83D\uDCBB';
+    return `
+      <div class="setting-device-row" data-id="${escapeAttr(d.deviceId)}">
+        <span class="setting-device-icon">${icon}</span>
+        <span class="setting-device-name">${escapeHtml(d.name)}</span>
+        <button class="unpair-btn" data-id="${escapeAttr(d.deviceId)}"
+                aria-label="Unpair ${escapeAttr(d.name)}">Unpair</button>
+      </div>
+    `;
+  }).join('');
+
+  // Wire unpair buttons via event delegation
+  container.onclick = async (e) => {
+    const btn = e.target.closest('.unpair-btn');
+    if (!btn) return;
+
+    const deviceId = btn.dataset.id;
+    if (!deviceId) return;
+
+    // Confirm before unpairing
+    if (!confirm(`Unpair this device? It will no longer be able to transfer files.`)) return;
+
+    // Remove from pairedDevices array
+    const stored = await chrome.storage.local.get('pairedDevices');
+    const updatedDevices = (stored.pairedDevices ?? []).filter(d => d.deviceId !== deviceId);
+    await chrome.storage.local.set({ pairedDevices: updatedDevices });
+
+    // Re-render the list and update main view
+    renderSettingsPairedDevices(updatedDevices);
+    await loadDevices();
+    showToast('Device unpaired.', 'success');
+  };
 }
 
 // ---------------------------------------------------------------------------

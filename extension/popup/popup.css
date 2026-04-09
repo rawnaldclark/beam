@@ -843,3 +843,124 @@ header {
   gap:     10px;
   width:   100%;
 }
+
+/* --------------------------------------------------------------------------
+   Settings view
+   -------------------------------------------------------------------------- */
+.settings-header {
+  display:       flex;
+  align-items:   center;
+  gap:           8px;
+  padding:       12px 16px;
+  border-bottom: 1px solid var(--border);
+  background:    var(--surface);
+}
+
+.settings-header h3 {
+  font-size:   15px;
+  font-weight: 600;
+  color:       var(--text-hi);
+}
+
+.settings-section {
+  padding: 12px 16px;
+}
+
+.settings-section h4 {
+  color:          var(--text-md);
+  font-size:      11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom:  8px;
+  font-weight:    600;
+}
+
+.setting-row {
+  display:         flex;
+  justify-content: space-between;
+  align-items:     center;
+  padding:         10px 0;
+  border-bottom:   1px solid var(--border);
+  cursor:          pointer;
+}
+
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+.setting-row span {
+  font-size: 13px;
+  color:     var(--text-hi);
+}
+
+.setting-row input[type="checkbox"] {
+  width:        18px;
+  height:       18px;
+  accent-color: var(--primary);
+  cursor:       pointer;
+  flex-shrink:  0;
+}
+
+.setting-row input[type="text"] {
+  background:    var(--surface);
+  border:        1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding:       4px 8px;
+  color:         var(--text-hi);
+  width:         120px;
+  text-align:    right;
+  font-size:     13px;
+  outline:       none;
+  transition:    border-color var(--transition);
+}
+
+.setting-row input[type="text"]:focus {
+  border-color: var(--primary);
+}
+
+/* Paired devices list inside settings */
+.setting-device-row {
+  display:     flex;
+  align-items: center;
+  gap:         8px;
+  padding:     8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.setting-device-row:last-child {
+  border-bottom: none;
+}
+
+.setting-device-icon {
+  font-size:   18px;
+  flex-shrink: 0;
+  width:       24px;
+  text-align:  center;
+}
+
+.setting-device-name {
+  flex:        1;
+  font-size:   13px;
+  color:       var(--text-hi);
+  white-space: nowrap;
+  overflow:    hidden;
+  text-overflow: ellipsis;
+}
+
+.unpair-btn {
+  padding:       4px 10px;
+  border-radius: var(--radius-sm);
+  border:        1px solid var(--danger);
+  background:    var(--danger-dim);
+  color:         var(--danger);
+  font-size:     11px;
+  font-weight:   600;
+  cursor:        pointer;
+  flex-shrink:   0;
+  transition:    background var(--transition);
+}
+
+.unpair-btn:hover {
+  background: var(--danger);
+  color:      #fff;
+}

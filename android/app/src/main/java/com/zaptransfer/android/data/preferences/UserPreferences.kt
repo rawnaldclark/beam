@@ -33,6 +33,10 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
  *                            Null means "use the system Downloads folder".
  * @param autoAccept          When true, incoming transfers from paired devices
  *                            are accepted automatically without a prompt.
+ * @param autoCopyClipboard   When true, incoming clipboard content is automatically
+ *                            copied to the Android system clipboard. Default: true.
+ * @param autoSaveFiles       When true, incoming files are automatically saved to
+ *                            the configured save location. Default: false.
  * @param deviceName          Human-readable name this device advertises to peers.
  *                            Defaults to the device's Build.MODEL.
  * @param dozePromptDismissedAt  Unix epoch ms when the battery optimisation dialog
@@ -42,6 +46,8 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 data class UserPrefsSnapshot(
     val saveLocationUri: String? = null,
     val autoAccept: Boolean = true,
+    val autoCopyClipboard: Boolean = true,
+    val autoSaveFiles: Boolean = false,
     val deviceName: String = android.os.Build.MODEL,
     val dozePromptDismissedAt: Long = 0L,
 )
@@ -69,6 +75,8 @@ class UserPreferences @Inject constructor(
     private object Keys {
         val SAVE_LOCATION_URI = stringPreferencesKey("save_location_uri")
         val AUTO_ACCEPT = booleanPreferencesKey("auto_accept")
+        val AUTO_COPY_CLIPBOARD = booleanPreferencesKey("auto_copy_clipboard")
+        val AUTO_SAVE_FILES = booleanPreferencesKey("auto_save_files")
         val DEVICE_NAME = stringPreferencesKey("device_name")
         val DOZE_PROMPT_DISMISSED_AT = longPreferencesKey("doze_prompt_dismissed_at")
     }
@@ -95,6 +103,8 @@ class UserPreferences @Inject constructor(
             UserPrefsSnapshot(
                 saveLocationUri = prefs[Keys.SAVE_LOCATION_URI],
                 autoAccept = prefs[Keys.AUTO_ACCEPT] ?: true,
+                autoCopyClipboard = prefs[Keys.AUTO_COPY_CLIPBOARD] ?: true,
+                autoSaveFiles = prefs[Keys.AUTO_SAVE_FILES] ?: false,
                 deviceName = prefs[Keys.DEVICE_NAME] ?: android.os.Build.MODEL,
                 dozePromptDismissedAt = prefs[Keys.DOZE_PROMPT_DISMISSED_AT] ?: 0L,
             )
@@ -149,6 +159,38 @@ class UserPreferences @Inject constructor(
             prefs[Keys.DEVICE_NAME] = name.take(50)  // hard cap: 50 chars
         }
         Log.d(TAG, "Device name updated: $name")
+    }
+
+    /**
+     * Updates the auto-copy clipboard setting.
+     *
+     * When enabled, incoming clipboard content from paired devices is automatically
+     * copied to the Android system clipboard. When disabled, content is stored in
+     * Room but the user must manually tap to copy.
+     *
+     * @param enabled true to auto-copy incoming clipboard; false to require manual copy.
+     */
+    suspend fun setAutoCopyClipboard(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AUTO_COPY_CLIPBOARD] = enabled
+        }
+        Log.d(TAG, "Auto-copy clipboard updated: $enabled")
+    }
+
+    /**
+     * Updates the auto-save files setting.
+     *
+     * When enabled, incoming files from paired devices are automatically saved to
+     * the configured save location. When disabled, files are held in a temp buffer
+     * and the user must manually confirm the save.
+     *
+     * @param enabled true to auto-save incoming files; false to require manual save.
+     */
+    suspend fun setAutoSaveFiles(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AUTO_SAVE_FILES] = enabled
+        }
+        Log.d(TAG, "Auto-save files updated: $enabled")
     }
 
     /**

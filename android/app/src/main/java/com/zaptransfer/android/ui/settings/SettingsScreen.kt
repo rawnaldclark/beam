@@ -75,6 +75,8 @@ fun SettingsScreen(
         onSaveLocationSelected = { uri -> viewModel.setSaveLocation(uri) },
         onClearSaveLocation = { viewModel.clearSaveLocation() },
         onAutoAcceptChanged = { enabled -> viewModel.setAutoAccept(enabled) },
+        onAutoCopyChanged = { enabled -> viewModel.setAutoCopyClipboard(enabled) },
+        onAutoSaveChanged = { enabled -> viewModel.setAutoSaveFiles(enabled) },
         onDeviceNameChanged = { name -> viewModel.setDeviceName(name) },
         onUnpair = { deviceId -> viewModel.unPairDevice(deviceId) },
     )
@@ -94,6 +96,8 @@ private fun SettingsContent(
     onSaveLocationSelected: (String) -> Unit,
     onClearSaveLocation: () -> Unit,
     onAutoAcceptChanged: (Boolean) -> Unit,
+    onAutoCopyChanged: (Boolean) -> Unit,
+    onAutoSaveChanged: (Boolean) -> Unit,
     onDeviceNameChanged: (String) -> Unit,
     onUnpair: (String) -> Unit,
 ) {
@@ -142,37 +146,95 @@ private fun SettingsContent(
                 .padding(innerPadding),
         ) {
 
-            // ── Setting 1: Save location ─────────────────────────────────────
+            // ── Section: Transfers ───────────────────────────────────────────
             item {
-                val locationLabel = uiState.prefs.saveLocationUri
-                    ?.let { uri ->
-                        // Show only the last path segment for readability
-                        Uri.parse(uri).lastPathSegment ?: uri
-                    }
-                    ?: "Downloads (default)"
+                Text(
+                    text = "Transfers",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+                )
+            }
 
+            // Auto-copy clipboard
+            item {
                 ListItem(
-                    modifier = Modifier.clickable { dirPickerLauncher.launch(null) },
-                    headlineContent = { Text("Save location") },
-                    supportingContent = { Text(locationLabel) },
-                    leadingContent = {
-                        Icon(
-                            imageVector = Icons.Default.FolderOpen,
-                            contentDescription = null,
+                    headlineContent = { Text("Auto-copy clipboard") },
+                    supportingContent = {
+                        Text(
+                            if (uiState.prefs.autoCopyClipboard) {
+                                "Incoming clipboard content is copied automatically"
+                            } else {
+                                "Tap received clipboard items to copy manually"
+                            }
                         )
                     },
                     trailingContent = {
-                        if (uiState.prefs.saveLocationUri != null) {
-                            TextButton(onClick = onClearSaveLocation) {
-                                Text("Reset")
-                            }
-                        }
+                        Switch(
+                            checked = uiState.prefs.autoCopyClipboard,
+                            onCheckedChange = onAutoCopyChanged,
+                        )
                     },
                 )
                 HorizontalDivider()
             }
 
-            // ── Setting 2: Auto-accept ────────────────────────────────────────
+            // Auto-save files
+            item {
+                ListItem(
+                    headlineContent = { Text("Auto-save files") },
+                    supportingContent = {
+                        Text(
+                            if (uiState.prefs.autoSaveFiles) {
+                                "Incoming files are saved automatically"
+                            } else {
+                                "You will be prompted before saving received files"
+                            }
+                        )
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = uiState.prefs.autoSaveFiles,
+                            onCheckedChange = onAutoSaveChanged,
+                        )
+                    },
+                )
+                HorizontalDivider()
+            }
+
+            // Save location — only visible when auto-save is ON
+            if (uiState.prefs.autoSaveFiles) {
+                item {
+                    val locationLabel = uiState.prefs.saveLocationUri
+                        ?.let { uri ->
+                            // Show only the last path segment for readability
+                            Uri.parse(uri).lastPathSegment ?: uri
+                        }
+                        ?: "Downloads (default)"
+
+                    ListItem(
+                        modifier = Modifier.clickable { dirPickerLauncher.launch(null) },
+                        headlineContent = { Text("Save location") },
+                        supportingContent = { Text(locationLabel) },
+                        leadingContent = {
+                            Icon(
+                                imageVector = Icons.Default.FolderOpen,
+                                contentDescription = null,
+                            )
+                        },
+                        trailingContent = {
+                            if (uiState.prefs.saveLocationUri != null) {
+                                TextButton(onClick = onClearSaveLocation) {
+                                    Text("Reset")
+                                }
+                            }
+                        },
+                    )
+                    HorizontalDivider()
+                }
+            }
+
+            // Auto-accept transfers
             item {
                 ListItem(
                     headlineContent = { Text("Auto-accept transfers") },
@@ -195,7 +257,17 @@ private fun SettingsContent(
                 HorizontalDivider()
             }
 
-            // ── Setting 3: Device name ────────────────────────────────────────
+            // ── Section: Device ─────────────────────────────────────────────
+            item {
+                Text(
+                    text = "Device",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+                )
+            }
+
+            // Device name
             item {
                 ListItem(
                     modifier = Modifier.clickable { showNameDialog = true },
@@ -211,7 +283,16 @@ private fun SettingsContent(
                 HorizontalDivider()
             }
 
-            // ── Setting 4: Paired devices header ─────────────────────────────
+            // ── Section: Paired Devices ─────────────────────────────────────
+            item {
+                Text(
+                    text = "Paired Devices",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+                )
+            }
+
             item {
                 ListItem(
                     modifier = Modifier.clickable { devicesExpanded = !devicesExpanded },
@@ -374,6 +455,8 @@ private fun SettingsScreenPreview() {
             onSaveLocationSelected = {},
             onClearSaveLocation = {},
             onAutoAcceptChanged = {},
+            onAutoCopyChanged = {},
+            onAutoSaveChanged = {},
             onDeviceNameChanged = {},
             onUnpair = {},
         )
@@ -390,6 +473,8 @@ private fun SettingsScreenEmptyPreview() {
             onSaveLocationSelected = {},
             onClearSaveLocation = {},
             onAutoAcceptChanged = {},
+            onAutoCopyChanged = {},
+            onAutoSaveChanged = {},
             onDeviceNameChanged = {},
             onUnpair = {},
         )

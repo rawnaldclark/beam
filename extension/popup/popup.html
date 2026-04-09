@@ -83,6 +83,42 @@
     </div>
 
     <!-- ====================================================== -->
+    <!--  VIEW: Settings                                        -->
+    <!-- ====================================================== -->
+    <div id="view-settings" class="view hidden" role="region" aria-label="Settings">
+      <div class="settings-header">
+        <button id="settings-back" class="icon-btn" title="Back"
+                aria-label="Back to main view">&#8592;</button>
+        <h3>Settings</h3>
+      </div>
+
+      <div class="settings-section">
+        <h4>Transfers</h4>
+        <label class="setting-row">
+          <span>Auto-copy clipboard</span>
+          <input type="checkbox" id="setting-auto-copy" checked>
+        </label>
+        <label class="setting-row">
+          <span>Auto-save files</span>
+          <input type="checkbox" id="setting-auto-save">
+        </label>
+      </div>
+
+      <div class="settings-section">
+        <h4>Device</h4>
+        <label class="setting-row">
+          <span>Device name</span>
+          <input type="text" id="setting-device-name" value="Chrome" maxlength="30">
+        </label>
+      </div>
+
+      <div class="settings-section">
+        <h4>Paired Devices</h4>
+        <div id="settings-paired-devices"></div>
+      </div>
+    </div>
+
+    <!-- ====================================================== -->
     <!--  VIEW: Main — device list, drop zone, history          -->
     <!-- ====================================================== -->
     <div id="view-main" class="view" role="main">

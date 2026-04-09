@@ -167,6 +167,10 @@ export async function startPairingListener(deviceId, ed25519Sk, ed25519Pk) {
         // Incoming clipboard content from a paired Android device.
         console.log('[Beam SW] Clipboard received from', msg.fromDeviceId || msg.deviceId);
 
+        // Read the auto-copy setting (default: ON).
+        const settingsData = await chrome.storage.local.get('settings');
+        const autoCopy = settingsData?.settings?.autoCopy !== false;
+
         // Append to session storage ring buffer (most recent first, max 20 entries).
         const existing = (await chrome.storage.session.get('receivedClipboard'))?.receivedClipboard || [];
         existing.unshift({
@@ -177,11 +181,27 @@ export async function startPairingListener(deviceId, ed25519Sk, ed25519Pk) {
         if (existing.length > 20) existing.length = 20;
         await chrome.storage.session.set({ receivedClipboard: existing });
 
+        if (autoCopy) {
+          // Service workers cannot write to the clipboard directly.
+          // Set a flag in session storage so the popup can copy on next open,
+          // and notify the popup if it is currently open.
+          await chrome.storage.session.set({ autoCopyPending: msg.content });
+          try {
+            await chrome.runtime.sendMessage({
+              type: 'AUTO_COPY_CLIPBOARD',
+              payload: { content: msg.content },
+            });
+          } catch {
+            // Popup is closed — autoCopyPending will be consumed when it reopens.
+          }
+        }
+
         // Show a desktop notification with a content preview.
+        const notifTitle = autoCopy ? 'Clipboard Copied' : 'Clipboard Received';
         chrome.notifications.create('clipboard-' + Date.now(), {
           type: 'basic',
           iconUrl: 'icons/icon-128.png',
-          title: 'Clipboard Received',
+          title: notifTitle,
           message: msg.content.slice(0, 100) + (msg.content.length > 100 ? '...' : ''),
         });
       }
@@ -351,24 +371,52 @@ async function assembleAndSaveFile() {
   }
   base64 = btoa(base64);
 
-  await chrome.storage.session.set({
-    receivedFile: {
-      fileName:     ft.fileName,
-      fileSize:     ft.fileSize,
-      mimeType:     ft.mimeType,
-      fromDeviceId: ft.fromDeviceId,
-      data:         base64,
-      timestamp:    Date.now(),
-    },
-  });
+  // Read the auto-save setting (default: OFF).
+  const settingsData = await chrome.storage.local.get('settings');
+  const autoSave = !!settingsData?.settings?.autoSave;
 
-  // Desktop notification so the user knows a file arrived.
-  chrome.notifications.create('file-' + Date.now(), {
-    type:    'basic',
-    iconUrl: 'icons/icon-128.png',
-    title:   'File Received',
-    message: ft.fileName + ' (' + formatSize(ft.fileSize) + ')',
-  });
+  if (autoSave) {
+    // Auto-save: trigger a browser download directly from the service worker.
+    const dataUrl = `data:${ft.mimeType};base64,${base64}`;
+    try {
+      await chrome.downloads.download({
+        url:      dataUrl,
+        filename: ft.fileName,
+        saveAs:   false,
+      });
+      console.log('[Beam SW] Auto-saved file:', ft.fileName);
+    } catch (err) {
+      console.error('[Beam SW] Auto-save download failed:', err);
+    }
+
+    // Desktop notification
+    chrome.notifications.create('file-' + Date.now(), {
+      type:    'basic',
+      iconUrl: 'icons/icon-128.png',
+      title:   'File Saved',
+      message: ft.fileName + ' (' + formatSize(ft.fileSize) + ') saved to Downloads',
+    });
+  } else {
+    // Manual save: store in session storage for the popup to show a download banner.
+    await chrome.storage.session.set({
+      receivedFile: {
+        fileName:     ft.fileName,
+        fileSize:     ft.fileSize,
+        mimeType:     ft.mimeType,
+        fromDeviceId: ft.fromDeviceId,
+        data:         base64,
+        timestamp:    Date.now(),
+      },
+    });
+
+    // Desktop notification so the user knows a file arrived.
+    chrome.notifications.create('file-' + Date.now(), {
+      type:    'basic',
+      iconUrl: 'icons/icon-128.png',
+      title:   'File Received',
+      message: ft.fileName + ' (' + formatSize(ft.fileSize) + ') — open Beam to save',
+    });
+  }
 
   // Release the relay session and clear state.
   sendPairingMessage({ type: 'relay-release', transferId: ft.transferId });

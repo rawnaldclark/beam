@@ -112,6 +112,34 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    // ── Auto-copy clipboard ──────────────────────────────────────────────────
+
+    /**
+     * Toggles automatic clipboard copying for incoming clipboard content.
+     *
+     * @param enabled true to auto-copy; false to require manual tap-to-copy.
+     */
+    fun setAutoCopyClipboard(enabled: Boolean) {
+        viewModelScope.launch {
+            userPreferences.setAutoCopyClipboard(enabled)
+            Log.d(TAG, "Auto-copy clipboard set: $enabled")
+        }
+    }
+
+    // ── Auto-save files ──────────────────────────────────────────────────────
+
+    /**
+     * Toggles automatic file saving for incoming file transfers.
+     *
+     * @param enabled true to auto-save; false to require manual save confirmation.
+     */
+    fun setAutoSaveFiles(enabled: Boolean) {
+        viewModelScope.launch {
+            userPreferences.setAutoSaveFiles(enabled)
+            Log.d(TAG, "Auto-save files set: $enabled")
+        }
+    }
+
     // ── Setting 3: Device name ────────────────────────────────────────────────
 
     /**

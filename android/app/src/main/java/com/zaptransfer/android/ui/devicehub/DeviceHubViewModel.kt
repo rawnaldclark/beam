@@ -16,6 +16,7 @@ import com.zaptransfer.android.data.db.dao.TransferHistoryDao
 import com.zaptransfer.android.data.db.entity.ClipboardEntryEntity
 import com.zaptransfer.android.data.db.entity.PairedDeviceEntity
 import com.zaptransfer.android.data.db.entity.TransferHistoryEntity
+import com.zaptransfer.android.data.preferences.UserPreferences
 import com.zaptransfer.android.data.repository.DeviceRepository
 import com.zaptransfer.android.webrtc.ConnectionState
 import com.zaptransfer.android.webrtc.RelayMessage
@@ -26,10 +27,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -68,12 +71,20 @@ class DeviceHubViewModel @Inject constructor(
     private val transferHistoryDao: TransferHistoryDao,
     private val clipboardDao: ClipboardDao,
     private val signalingClient: SignalingClient,
+    private val userPreferences: UserPreferences,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 
     /** Shared flow for one-shot UI events (e.g., toast messages). */
     private val _toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 5)
     val toastEvents: SharedFlow<String> = _toastEvents.asSharedFlow()
+
+    /**
+     * Pending file that was received but not yet saved (when auto-save is OFF).
+     * The UI can observe this to show a "Save" prompt for the received file.
+     */
+    private val _pendingFileSave = MutableStateFlow<PendingFileSave?>(null)
+    val pendingFileSave: StateFlow<PendingFileSave?> = _pendingFileSave.asStateFlow()
 
     /**
      * State for an in-progress incoming file transfer.
@@ -99,8 +110,8 @@ class DeviceHubViewModel @Inject constructor(
                     Log.d(TAG, "File chunk: ${message.data.size} bytes, total: ${ft.bytesReceived}/${ft.fileSize}")
                     // Auto-assemble when all bytes received
                     if (ft.bytesReceived >= ft.fileSize) {
-                        Log.d(TAG, "All bytes received, saving file")
-                        saveReceivedFile(ft)
+                        Log.d(TAG, "All bytes received, handling file")
+                        handleReceivedFileComplete(ft)
                         pendingFileTransfer = null
                     }
                 }
@@ -121,19 +132,30 @@ class DeviceHubViewModel @Inject constructor(
 
     /**
      * Handle an incoming clipboard-transfer message.
-     * Copies the content to the Android clipboard and persists it to Room.
+     *
+     * Behaviour depends on the auto-copy clipboard setting:
+     *   - ON:  copies to system clipboard + toast "Clipboard received and copied"
+     *   - OFF: stores in Room only + toast "Clipboard received -- tap to copy"
+     *
+     * In both cases the content is persisted to Room for the history section.
      */
     private fun handleClipboardTransfer(json: JSONObject) {
         val content = json.optString("content", "")
         val from = json.optString("fromDeviceId", json.optString("deviceId", ""))
         Log.d(TAG, "Clipboard received from $from, length=${content.length}")
 
-        // Copy to Android system clipboard
-        val clipboardManager = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboardManager.setPrimaryClip(ClipData.newPlainText("Beam Clipboard", content))
-
-        // Persist to Room for the "Received Clipboard" history section
         viewModelScope.launch {
+            // Read the current auto-copy setting from DataStore.
+            val prefs = userPreferences.preferencesFlow.first()
+            val autoCopy = prefs.autoCopyClipboard
+
+            if (autoCopy) {
+                // Copy to Android system clipboard
+                val clipboardManager = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboardManager.setPrimaryClip(ClipData.newPlainText("Beam Clipboard", content))
+            }
+
+            // Always persist to Room for the "Received Clipboard" history section
             try {
                 clipboardDao.insert(
                     ClipboardEntryEntity(
@@ -150,11 +172,15 @@ class DeviceHubViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to persist clipboard entry: ${e.message}")
             }
-        }
 
-        // Notify the UI
-        val preview = if (content.length > 60) content.take(57) + "..." else content
-        _toastEvents.tryEmit("Clipboard received: $preview")
+            // Notify the UI with an appropriate message
+            val preview = if (content.length > 60) content.take(57) + "..." else content
+            if (autoCopy) {
+                _toastEvents.tryEmit("Clipboard received and copied: $preview")
+            } else {
+                _toastEvents.tryEmit("Clipboard received \u2014 tap to copy: $preview")
+            }
+        }
     }
 
     /**
@@ -207,7 +233,7 @@ class DeviceHubViewModel @Inject constructor(
         if (ft == null || ft.transferId != transferId) return
 
         Log.d(TAG, "File complete: ${ft.fileName}, ${ft.bytesReceived} bytes received")
-        saveReceivedFile(ft)
+        handleReceivedFileComplete(ft)
         pendingFileTransfer = null
     }
 
@@ -431,6 +457,81 @@ class DeviceHubViewModel @Inject constructor(
     }
 
     /**
+     * Routes a completed file transfer based on the auto-save setting.
+     *
+     * - Auto-save ON:  immediately saves to Downloads and toasts "Saved [filename]".
+     * - Auto-save OFF: holds the assembled bytes in [_pendingFileSave] so the UI
+     *                  can prompt the user, and toasts "File received: [filename] -- open app to save".
+     */
+    private fun handleReceivedFileComplete(ft: FileTransferState) {
+        viewModelScope.launch {
+            val prefs = userPreferences.preferencesFlow.first()
+            if (prefs.autoSaveFiles) {
+                saveReceivedFile(ft)
+            } else {
+                // Assemble chunks into a single byte array for deferred save.
+                val combined = ByteArray(ft.chunks.sumOf { it.size })
+                var offset = 0
+                for (chunk in ft.chunks) {
+                    chunk.copyInto(combined, offset)
+                    offset += chunk.size
+                }
+                _pendingFileSave.value = PendingFileSave(
+                    fileName = ft.fileName,
+                    mimeType = ft.mimeType,
+                    data = combined,
+                    fromDeviceId = ft.fromDeviceId,
+                )
+                _toastEvents.tryEmit("File received: ${ft.fileName} \u2014 open app to save")
+            }
+        }
+    }
+
+    /**
+     * Saves the currently pending file (held in [_pendingFileSave]) to Downloads.
+     * Called by the UI when the user taps "Save" on the pending file prompt.
+     */
+    fun savePendingFile() {
+        val pending = _pendingFileSave.value ?: return
+        viewModelScope.launch {
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, pending.fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, pending.mimeType)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Downloads.IS_PENDING, 1)
+                    }
+                }
+                val uri = appContext.contentResolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                ) ?: throw Exception("Failed to create file entry in MediaStore")
+
+                appContext.contentResolver.openOutputStream(uri)?.use { it.write(pending.data) }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    values.clear()
+                    values.put(MediaStore.Downloads.IS_PENDING, 0)
+                    appContext.contentResolver.update(uri, values, null, null)
+                }
+
+                Log.d(TAG, "Pending file saved to Downloads: ${pending.fileName}")
+                _toastEvents.tryEmit("Saved ${pending.fileName} to Downloads")
+                _pendingFileSave.value = null
+            } catch (e: Exception) {
+                Log.e(TAG, "savePendingFile failed: ${e.message}", e)
+                _toastEvents.tryEmit("Failed to save file: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Dismisses the pending file save prompt without saving.
+     */
+    fun dismissPendingFile() {
+        _pendingFileSave.value = null
+    }
+
+    /**
      * Assembles received file chunks and saves the resulting file to the
      * Downloads directory via MediaStore.
      *
@@ -531,4 +632,20 @@ data class FileTransferState(
     val fromDeviceId: String,
     val chunks: MutableList<ByteArray> = mutableListOf(),
     var bytesReceived: Int = 0,
+)
+
+/**
+ * Holds a fully received file that has not yet been saved to disk.
+ * Used when auto-save is OFF — the UI shows a save prompt with this data.
+ *
+ * @param fileName     Original file name from the sender.
+ * @param mimeType     MIME type of the file.
+ * @param data         Complete file contents as a byte array.
+ * @param fromDeviceId Device ID of the sender.
+ */
+data class PendingFileSave(
+    val fileName: String,
+    val mimeType: String,
+    val data: ByteArray,
+    val fromDeviceId: String,
 )
