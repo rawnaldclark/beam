@@ -173,8 +173,10 @@ async function loadTransferHistory() {
  * @returns {Promise<void>}
  */
 async function loadClipboardHistory() {
-  const stored = await chrome.storage.session.get('clipboardHistory').catch(() => ({}));
-  renderClipboardHistory(stored?.clipboardHistory ?? []);
+  // Load from both keys — 'receivedClipboard' (from background-relay.js) and legacy 'clipboardHistory'
+  const stored = await chrome.storage.session.get(['receivedClipboard', 'clipboardHistory']).catch(() => ({}));
+  const items = stored?.receivedClipboard ?? stored?.clipboardHistory ?? [];
+  renderClipboardHistory(items);
 }
 
 // ---------------------------------------------------------------------------
@@ -349,19 +351,21 @@ function renderClipboardHistory(history) {
   count.textContent = String(history.length);
 
   list.innerHTML = history.map(item => {
-    // Show first 60 chars of content as preview; XSS-escape the content.
-    const preview = escapeHtml(item.content.slice(0, 60)) +
-                    (item.content.length > 60 ? '…' : '');
+    const preview = escapeHtml(item.content.slice(0, 80)) +
+                    (item.content.length > 80 ? '…' : '');
+    const from = item.fromDeviceId ? `From device` : '';
+    const time = formatRelativeTime(item.timestamp);
     return `
       <div class="history-item">
-        <div class="history-item-icon" aria-hidden="true">📋</div>
+        <div class="history-item-icon" aria-hidden="true">📥</div>
         <div class="history-item-body">
           <div class="history-item-name">${preview}</div>
-          <div class="history-item-meta">${formatRelativeTime(item.timestamp)}</div>
+          <div class="history-item-meta">${from} ${time}</div>
         </div>
-        <button class="history-item-copy resend-clip-btn"
+        <button class="copy-clip-btn"
                 data-content="${escapeAttr(item.content)}"
-                aria-label="Resend this clipboard item">Resend</button>
+                aria-label="Copy to clipboard"
+                style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-primary);cursor:pointer;font-size:12px;">Copy</button>
       </div>
     `;
   }).join('');
@@ -648,7 +652,7 @@ function listenForStorageChanges() {
     if (area === 'session') {
       if (changes.devicePresence)    loadDevices();
       if (changes.transferHistory)   loadTransferHistory();
-      if (changes.clipboardHistory)  loadClipboardHistory();
+      if (changes.clipboardHistory || changes.receivedClipboard) loadClipboardHistory();
     }
   });
 }
@@ -1037,6 +1041,30 @@ function handleDeviceListClick(e) {
  * @param {MouseEvent} e
  */
 function handleClipboardResend(e) {
+  // Handle Copy button
+  const copyBtn = e.target.closest('.copy-clip-btn');
+  if (copyBtn) {
+    const content = copyBtn.dataset.content;
+    if (content) {
+      navigator.clipboard.writeText(content).then(() => {
+        copyBtn.textContent = '✓';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+      }).catch(() => {
+        // Fallback: select text in a textarea
+        const ta = document.createElement('textarea');
+        ta.value = content;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        copyBtn.textContent = '✓';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+      });
+    }
+    return;
+  }
+
+  // Handle Resend button (legacy)
   const btn = e.target.closest('.resend-clip-btn');
   if (!btn || !selectedDeviceId) return;
 
