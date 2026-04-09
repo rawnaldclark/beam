@@ -99,13 +99,15 @@ fun BeamNavGraph(
 
         // ── Device Hub ───────────────────────────────────────────────────────
         composable(ROUTE_DEVICE_HUB) {
+            val deviceHubVm: com.zaptransfer.android.ui.devicehub.DeviceHubViewModel = hiltViewModel()
             com.zaptransfer.android.ui.devicehub.DeviceHubScreen(
+                viewModel = deviceHubVm,
                 onNavigateToPairScan = { navController.navigate(ROUTE_PAIRING_SCAN) },
                 onNavigateToPairPin = { navController.navigate(ROUTE_PAIRING_PIN) },
                 onNavigateToSettings = { navController.navigate(ROUTE_SETTINGS) },
                 // Phase H: replace stubs below with real send-file / send-text flows
                 onSendFile = { /* deviceId -> launch file picker */ },
-                onSendText = { /* deviceId -> open text send sheet */ },
+                onSendText = { deviceId -> deviceHubVm.sendClipboard(deviceId) },
             )
         }
 

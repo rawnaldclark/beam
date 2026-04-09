@@ -887,16 +887,27 @@ async function sendClipboard() {
     return;
   }
 
-  chrome.runtime.sendMessage({
-    type:    MSG.INITIATE_TRANSFER,
-    payload: {
-      type:           'clipboard',
-      targetDeviceId: selectedDeviceId,
-      content:        text,
-    },
-  }).catch(err => showToast(`Send failed: ${err.message}`, 'error'));
+  // Look up the paired device to get its rendezvousId (Chrome's deviceId)
+  // for relay routing.
+  const stored = await chrome.storage.local.get(['pairedDevices', 'deviceId']);
+  const pairedDevice = (stored.pairedDevices || []).find(d => d.deviceId === selectedDeviceId);
+  const rendezvousId = pairedDevice?.rendezvousId || stored.deviceId;
 
-  showToast('Clipboard sent!', 'success');
+  // Send via the SW's relay WebSocket (clipboard-transfer wire message).
+  chrome.runtime.sendMessage({
+    type: 'SEND_CLIPBOARD',
+    payload: {
+      content:        text,
+      targetDeviceId: selectedDeviceId,
+      rendezvousId,
+    },
+  }).then(resp => {
+    if (resp?.ok) {
+      showToast('Clipboard sent!', 'success');
+    } else {
+      showToast('Send failed: relay not connected.', 'error');
+    }
+  }).catch(err => showToast(`Send failed: ${err.message}`, 'error'));
 }
 
 /**

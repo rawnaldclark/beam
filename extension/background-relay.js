@@ -141,6 +141,28 @@ export async function startPairingListener(deviceId, ed25519Sk, ed25519Pk) {
           // The popup will read from chrome.storage.session when it reopens.
         }
       }
+      else if (msg.type === 'clipboard-transfer') {
+        // Incoming clipboard content from a paired Android device.
+        console.log('[Beam SW] Clipboard received from', msg.fromDeviceId || msg.deviceId);
+
+        // Append to session storage ring buffer (most recent first, max 20 entries).
+        const existing = (await chrome.storage.session.get('receivedClipboard'))?.receivedClipboard || [];
+        existing.unshift({
+          content: msg.content,
+          fromDeviceId: msg.fromDeviceId || msg.deviceId,
+          timestamp: Date.now(),
+        });
+        if (existing.length > 20) existing.length = 20;
+        await chrome.storage.session.set({ receivedClipboard: existing });
+
+        // Show a desktop notification with a content preview.
+        chrome.notifications.create('clipboard-' + Date.now(), {
+          type: 'basic',
+          iconUrl: 'icons/icon-128.png',
+          title: 'Clipboard Received',
+          message: msg.content.slice(0, 100) + (msg.content.length > 100 ? '...' : ''),
+        });
+      }
     };
 
     pairingWs.onerror = (e) => {

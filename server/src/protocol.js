@@ -53,6 +53,9 @@ export const MSG = Object.freeze({
   PAIRING_REQUEST:    'pairing-request',
   PAIRING_ACK:        'pairing-ack',
 
+  // Clipboard transfer (relay-routed like pairing messages)
+  CLIPBOARD_TRANSFER: 'clipboard-transfer',
+
   // Session management
   RECONNECT:          'reconnect',
   ERROR:              'error',
@@ -169,6 +172,13 @@ const FIELD_RULES = new Map([
     if (!isNonEmptyString(msg.deviceId))       return 'Missing or invalid field: deviceId (must be a non-empty string)';
     if (!isNonEmptyString(msg.ed25519Pk))      return 'Missing or invalid field: ed25519Pk (must be a non-empty string)';
     if (!isNonEmptyString(msg.x25519Pk))       return 'Missing or invalid field: x25519Pk (must be a non-empty string)';
+    return null;
+  }],
+
+  [MSG.CLIPBOARD_TRANSFER, (msg) => {
+    if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+    if (typeof msg.content !== 'string')       return 'Missing or invalid field: content (must be a string)';
     return null;
   }],
 

@@ -340,6 +340,7 @@ gateway.onMessage((deviceId, msg, ws) => {
     case MSG.ICE_CANDIDATE:
     case MSG.PAIRING_REQUEST:
     case MSG.PAIRING_ACK:
+    case MSG.CLIPBOARD_TRANSFER:
       signaling.handleMessage(deviceId, msg, ws);
       break;
 

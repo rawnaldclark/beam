@@ -38,10 +38,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -95,6 +98,14 @@ fun DeviceHubScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val recentTransfers by viewModel.recentTransfers.collectAsState()
+
+    // Observe toast events from the ViewModel (clipboard send/receive feedback).
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        viewModel.toastEvents.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // Build a quick lookup map for device names in the history section.
     // This is O(n) per recomposition where n = number of paired devices — acceptable

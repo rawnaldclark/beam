@@ -299,6 +299,12 @@ export const WIRE = Object.freeze({
    */
   PAIRING_ACK:         'pairing-ack',
 
+  /**
+   * Client -> Server -> Peer: clipboard text transfer between paired devices.
+   * Payload: { targetDeviceId, rendezvousId, content }
+   */
+  CLIPBOARD_TRANSFER:  'clipboard-transfer',
+
   // -------------------------------------------------------------------------
   // Session management
   // -------------------------------------------------------------------------

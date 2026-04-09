@@ -38,6 +38,7 @@ const SIGNALING_TYPES = new Set([
   MSG.ICE_CANDIDATE,
   MSG.PAIRING_REQUEST,
   MSG.PAIRING_ACK,
+  MSG.CLIPBOARD_TRANSFER,
 ]);
 
 // ---------------------------------------------------------------------------

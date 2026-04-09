@@ -162,6 +162,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendPairingMessage(msg.payload);
       break;
 
+    // ── Clipboard transfer via relay WebSocket ─────────────────────────────
+    case 'SEND_CLIPBOARD': {
+      const { content, targetDeviceId, rendezvousId } = msg.payload;
+      sendPairingMessage({
+        type: 'clipboard-transfer',
+        targetDeviceId,
+        rendezvousId,
+        content,
+      });
+      sendResponse({ ok: true });
+      break;
+    }
+
     // ── All other messages — forward to offscreen document ─────────────────
     default: {
       // Messages like START_PAIRING, GET_DEVICE_LIST, PAIRING_CONFIRM_SAS, etc.

@@ -553,11 +553,13 @@ export async function confirmPairing(peerId, peerKeys, deviceId) {
     },
   });
 
-  // Save paired device to storage
+  // Save paired device to storage, including the rendezvousId (Chrome's deviceId)
+  // so clipboard-transfer knows which rendezvous to route through.
   const existing = await chrome.storage.local.get(['pairedDevices']);
   const devices = existing.pairedDevices || [];
   devices.push({
     deviceId:        peerId,
+    rendezvousId:    deviceId, // Chrome's deviceId — used for relay routing
     name:            'Android Device', // User will rename in the naming step
     icon:            'phone',
     ed25519PublicKey: peerKeys.ed25519Pk,
@@ -566,8 +568,9 @@ export async function confirmPairing(peerId, peerKeys, deviceId) {
   });
   await chrome.storage.local.set({ pairedDevices: devices });
 
-  // Tell SW to close the pairing relay connection.
-  chrome.runtime.sendMessage({ type: 'STOP_PAIRING_LISTENER' });
+  // NOTE: We intentionally do NOT close the relay WebSocket after pairing.
+  // The SW relay stays connected so it can send/receive clipboard-transfer
+  // messages between Chrome and Android without requiring a new connection.
 }
 
 /**
