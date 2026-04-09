@@ -39,6 +39,9 @@ const SIGNALING_TYPES = new Set([
   MSG.PAIRING_REQUEST,
   MSG.PAIRING_ACK,
   MSG.CLIPBOARD_TRANSFER,
+  MSG.FILE_OFFER,
+  MSG.FILE_ACCEPT,
+  MSG.FILE_COMPLETE,
 ]);
 
 // ---------------------------------------------------------------------------

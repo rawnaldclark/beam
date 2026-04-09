@@ -30,7 +30,7 @@
 
 import { MSG }                  from './shared/message-types.js';
 import { KEEPALIVE_INTERVAL_MS } from './shared/constants.js';
-import { startPairingListener, stopPairingListener, sendPairingMessage } from './background-relay.js';
+import { startPairingListener, stopPairingListener, sendPairingMessage, sendBinary } from './background-relay.js';
 
 // ---------------------------------------------------------------------------
 // Badge state — tracks a pending "failure" clear so we can dismiss it on the
@@ -161,6 +161,66 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'SEND_PAIRING_MESSAGE':
       sendPairingMessage(msg.payload);
       break;
+
+    // ── File transfer via relay binary channel ──────────────────────────────
+    case 'SEND_FILE': {
+      const { fileName, fileSize, mimeType, data, targetDeviceId, rendezvousId } = msg.payload;
+      const transferId = 'tf-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+
+      // Send file-offer metadata via JSON signaling.
+      sendPairingMessage({
+        type: 'file-offer',
+        targetDeviceId,
+        rendezvousId,
+        fileName,
+        fileSize,
+        mimeType,
+        transferId,
+      });
+
+      // Bind the relay session so binary frames are routed.
+      sendPairingMessage({
+        type: 'relay-bind',
+        transferId,
+        targetDeviceId,
+        rendezvousId,
+      });
+
+      // Wait for both sides to bind, then send binary data in chunks.
+      // The 1-second delay allows the receiver to process file-offer and
+      // send its own relay-bind before we start streaming chunks.
+      setTimeout(() => {
+        // data is a base64 string from the popup.
+        const binaryStr = atob(data);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+
+        // Split into 200KB chunks (safely under 256KB relay limit).
+        const CHUNK_SIZE = 200 * 1024;
+        for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+          const chunk = bytes.slice(i, Math.min(i + CHUNK_SIZE, bytes.length));
+          sendBinary(chunk.buffer);
+        }
+
+        // Send file-complete after a short delay to ensure all chunks arrive.
+        setTimeout(() => {
+          sendPairingMessage({
+            type: 'file-complete',
+            targetDeviceId,
+            rendezvousId,
+            transferId,
+          });
+
+          // Release relay session.
+          sendPairingMessage({ type: 'relay-release', transferId });
+        }, 500);
+      }, 1000);
+
+      sendResponse({ ok: true, transferId });
+      return true;
+    }
 
     // ── Clipboard transfer via relay WebSocket ─────────────────────────────
     case 'SEND_CLIPBOARD': {

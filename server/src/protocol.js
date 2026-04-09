@@ -56,6 +56,11 @@ export const MSG = Object.freeze({
   // Clipboard transfer (relay-routed like pairing messages)
   CLIPBOARD_TRANSFER: 'clipboard-transfer',
 
+  // File transfer signaling (relay-routed)
+  FILE_OFFER:         'file-offer',
+  FILE_ACCEPT:        'file-accept',
+  FILE_COMPLETE:      'file-complete',
+
   // Session management
   RECONNECT:          'reconnect',
   ERROR:              'error',
@@ -179,6 +184,31 @@ const FIELD_RULES = new Map([
     if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
     if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
     if (typeof msg.content !== 'string')       return 'Missing or invalid field: content (must be a string)';
+    return null;
+  }],
+
+  [MSG.FILE_OFFER, (msg) => {
+    if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.fileName))       return 'Missing or invalid field: fileName (must be a non-empty string)';
+    if (typeof msg.fileSize !== 'number' || msg.fileSize <= 0)
+      return 'Missing or invalid field: fileSize (must be a positive number)';
+    if (!isNonEmptyString(msg.mimeType))       return 'Missing or invalid field: mimeType (must be a non-empty string)';
+    if (!isNonEmptyString(msg.transferId))     return 'Missing or invalid field: transferId (must be a non-empty string)';
+    return null;
+  }],
+
+  [MSG.FILE_ACCEPT, (msg) => {
+    if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.transferId))     return 'Missing or invalid field: transferId (must be a non-empty string)';
+    return null;
+  }],
+
+  [MSG.FILE_COMPLETE, (msg) => {
+    if (!isNonEmptyString(msg.targetDeviceId)) return 'Missing or invalid field: targetDeviceId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.rendezvousId))   return 'Missing or invalid field: rendezvousId (must be a non-empty string)';
+    if (!isNonEmptyString(msg.transferId))     return 'Missing or invalid field: transferId (must be a non-empty string)';
     return null;
   }],
 

@@ -116,6 +116,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadDevices();
   await loadTransferHistory();
   await loadClipboardHistory();
+  await loadReceivedFile();
   setupEventListeners();
   listenForStorageChanges();
   startKeepalive();
@@ -177,6 +178,20 @@ async function loadClipboardHistory() {
   const stored = await chrome.storage.session.get(['receivedClipboard', 'clipboardHistory']).catch(() => ({}));
   const items = stored?.receivedClipboard ?? stored?.clipboardHistory ?? [];
   renderClipboardHistory(items);
+}
+
+/**
+ * Load the most recently received file from session storage and render a
+ * download banner in the popup if one exists.
+ *
+ * Schema: chrome.storage.session -> receivedFile: {fileName, fileSize, mimeType,
+ *   fromDeviceId, data (base64), timestamp}
+ *
+ * @returns {Promise<void>}
+ */
+async function loadReceivedFile() {
+  const stored = await chrome.storage.session.get('receivedFile').catch(() => ({}));
+  renderReceivedFile(stored?.receivedFile ?? null);
 }
 
 // ---------------------------------------------------------------------------
@@ -372,6 +387,74 @@ function renderClipboardHistory(history) {
 
   // Delegate resend clicks.
   list.onclick = handleClipboardResend;
+}
+
+/**
+ * Render or hide the received-file download banner.
+ *
+ * When a file has been received, shows the file name, size, and a Download
+ * button. Clicking Download creates a blob URL and triggers a browser download.
+ * A Dismiss button removes the banner and clears session storage.
+ *
+ * @param {{fileName: string, fileSize: number, mimeType: string, data: string, timestamp: number}|null} file
+ */
+function renderReceivedFile(file) {
+  const section = document.getElementById('received-file-section');
+  if (!section) return;
+
+  if (!file) {
+    section.classList.add('hidden');
+    section.innerHTML = '';
+    return;
+  }
+
+  section.classList.remove('hidden');
+  section.innerHTML = `
+    <h4 class="section-title">Received File</h4>
+    <div class="history-item" style="align-items:center">
+      <div class="history-item-icon" aria-hidden="true">&#128230;</div>
+      <div class="history-item-body">
+        <div class="history-item-name">${escapeHtml(file.fileName)}</div>
+        <div class="history-item-meta">${formatBytes(file.fileSize)} &middot; ${formatRelativeTime(file.timestamp)}</div>
+      </div>
+      <button id="btn-download-file"
+              style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--primary);color:#fff;cursor:pointer;font-size:12px;margin-right:4px;">Download</button>
+      <button id="btn-dismiss-file"
+              style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-primary);cursor:pointer;font-size:12px;">Dismiss</button>
+    </div>
+  `;
+
+  // Download handler: decode base64, create blob URL, trigger download.
+  document.getElementById('btn-download-file')?.addEventListener('click', () => {
+    try {
+      const binaryStr = atob(file.data);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: file.mimeType });
+      const url  = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href     = url;
+      a.download = file.fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      showToast('Download started!', 'success');
+    } catch (err) {
+      showToast('Download failed: ' + err.message, 'error');
+    }
+  });
+
+  // Dismiss handler: clear the received file from session storage.
+  document.getElementById('btn-dismiss-file')?.addEventListener('click', async () => {
+    await chrome.storage.session.remove('receivedFile');
+    section.classList.add('hidden');
+    section.innerHTML = '';
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -653,6 +736,7 @@ function listenForStorageChanges() {
       if (changes.devicePresence)    loadDevices();
       if (changes.transferHistory)   loadTransferHistory();
       if (changes.clipboardHistory || changes.receivedClipboard) loadClipboardHistory();
+      if (changes.receivedFile) loadReceivedFile();
     }
   });
 }
@@ -832,17 +916,24 @@ async function handleFileSelect(e) {
 }
 
 /**
- * Read a File object into a byte array and post INITIATE_TRANSFER to the SW.
+ * Read a File object, encode as base64, and send via the relay binary channel.
  *
- * Large files are sent as a plain number[] because ArrayBuffer is not
- * serialisable across chrome.runtime.sendMessage; the offscreen document
- * reconstitutes the Uint8Array from the array.
+ * The file data is sent as a base64 string to the service worker because
+ * ArrayBuffer is not serialisable across chrome.runtime.sendMessage.
+ * The SW decodes it and streams binary chunks through the relay WebSocket.
  *
  * @param {File} file
  * @returns {Promise<void>}
  */
 async function sendFile(file) {
   if (!selectedDeviceId) return;
+
+  const targetId = selectedDeviceId;
+
+  // Look up the paired device to get the rendezvousId for relay routing.
+  const stored = await chrome.storage.local.get(['pairedDevices', 'deviceId']);
+  const pairedDevice = (stored.pairedDevices || []).find(d => d.deviceId === targetId);
+  const rendezvousId = pairedDevice?.rendezvousId || stored.deviceId;
 
   let buffer;
   try {
@@ -852,16 +943,32 @@ async function sendFile(file) {
     return;
   }
 
+  // Convert to base64 for serialisation across the message channel.
+  // Process in 32KB slices to avoid call-stack overflow on large files.
+  const bytes = new Uint8Array(buffer);
+  let base64 = '';
+  const SLICE = 32768;
+  for (let i = 0; i < bytes.length; i += SLICE) {
+    base64 += String.fromCharCode.apply(null, bytes.subarray(i, i + SLICE));
+  }
+  base64 = btoa(base64);
+
   chrome.runtime.sendMessage({
-    type:    MSG.INITIATE_TRANSFER,
+    type: 'SEND_FILE',
     payload: {
-      type:           'file',
-      targetDeviceId: selectedDeviceId,
-      data:           Array.from(new Uint8Array(buffer)),
       fileName:       file.name,
-      mimeType:       file.type || 'application/octet-stream',
       fileSize:       file.size,
+      mimeType:       file.type || 'application/octet-stream',
+      data:           base64,
+      targetDeviceId: targetId,
+      rendezvousId,
     },
+  }).then(resp => {
+    if (resp?.ok) {
+      showToast('Sending ' + escapeHtml(file.name) + '...', 'success');
+    } else {
+      showToast('Send failed: relay not connected.', 'error');
+    }
   }).catch(err => {
     showToast(`Could not send file: ${err.message}`, 'error');
   });

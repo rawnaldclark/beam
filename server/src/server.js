@@ -341,6 +341,9 @@ gateway.onMessage((deviceId, msg, ws) => {
     case MSG.PAIRING_REQUEST:
     case MSG.PAIRING_ACK:
     case MSG.CLIPBOARD_TRANSFER:
+    case MSG.FILE_OFFER:
+    case MSG.FILE_ACCEPT:
+    case MSG.FILE_COMPLETE:
       signaling.handleMessage(deviceId, msg, ws);
       break;
 

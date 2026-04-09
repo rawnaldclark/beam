@@ -305,6 +305,24 @@ export const WIRE = Object.freeze({
    */
   CLIPBOARD_TRANSFER:  'clipboard-transfer',
 
+  /**
+   * Client -> Server -> Peer: file transfer offer with metadata.
+   * Payload: { targetDeviceId, rendezvousId, fileName, fileSize, mimeType, transferId }
+   */
+  FILE_OFFER:          'file-offer',
+
+  /**
+   * Client -> Server -> Peer: acceptance of a file transfer offer.
+   * Payload: { targetDeviceId, rendezvousId, transferId }
+   */
+  FILE_ACCEPT:         'file-accept',
+
+  /**
+   * Client -> Server -> Peer: all binary chunks have been sent.
+   * Payload: { targetDeviceId, rendezvousId, transferId }
+   */
+  FILE_COMPLETE:       'file-complete',
+
   // -------------------------------------------------------------------------
   // Session management
   // -------------------------------------------------------------------------

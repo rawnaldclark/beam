@@ -1,6 +1,11 @@
 package com.zaptransfer.android.navigation
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -100,13 +105,30 @@ fun BeamNavGraph(
         // ── Device Hub ───────────────────────────────────────────────────────
         composable(ROUTE_DEVICE_HUB) {
             val deviceHubVm: com.zaptransfer.android.ui.devicehub.DeviceHubViewModel = hiltViewModel()
+
+            // Track which device the file picker was opened for.
+            val selectedDeviceIdForFile = remember { mutableStateOf<String?>(null) }
+
+            // System file picker launcher — sends the selected file via the relay.
+            val filePickerLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.GetContent()
+            ) { uri: Uri? ->
+                val deviceId = selectedDeviceIdForFile.value
+                if (uri != null && deviceId != null) {
+                    deviceHubVm.sendFile(deviceId, uri)
+                }
+                selectedDeviceIdForFile.value = null
+            }
+
             com.zaptransfer.android.ui.devicehub.DeviceHubScreen(
                 viewModel = deviceHubVm,
                 onNavigateToPairScan = { navController.navigate(ROUTE_PAIRING_SCAN) },
                 onNavigateToPairPin = { navController.navigate(ROUTE_PAIRING_PIN) },
                 onNavigateToSettings = { navController.navigate(ROUTE_SETTINGS) },
-                // Phase H: replace stubs below with real send-file / send-text flows
-                onSendFile = { /* deviceId -> launch file picker */ },
+                onSendFile = { deviceId ->
+                    selectedDeviceIdForFile.value = deviceId
+                    filePickerLauncher.launch("*/*")
+                },
                 onSendText = { deviceId -> deviceHubVm.sendClipboard(deviceId) },
             )
         }

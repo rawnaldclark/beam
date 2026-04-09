@@ -31,6 +31,22 @@ let pairingWs = null;
 let pairingDeviceId = null;
 
 /**
+ * State for an in-progress incoming file transfer.
+ * Populated when a file-offer is received; consumed when file-complete arrives.
+ *
+ * @type {{
+ *   transferId: string,
+ *   fileName: string,
+ *   fileSize: number,
+ *   mimeType: string,
+ *   fromDeviceId: string,
+ *   chunks: Uint8Array[],
+ *   bytesReceived: number,
+ * }|null}
+ */
+let pendingFileTransfer = null;
+
+/**
  * Start listening for a pairing request from an Android device.
  *
  * Opens a WebSocket to the relay server, authenticates using Ed25519
@@ -70,6 +86,12 @@ export async function startPairingListener(deviceId, ed25519Sk, ed25519Pk) {
     pairingWs = new WebSocket(RELAY_URL);
 
     pairingWs.onmessage = async (event) => {
+      // Handle binary frames (file data from relay).
+      if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
+        await handleIncomingBinaryFrame(event.data);
+        return;
+      }
+
       let msg;
       try {
         msg = JSON.parse(event.data);
@@ -163,6 +185,48 @@ export async function startPairingListener(deviceId, ed25519Sk, ed25519Pk) {
           message: msg.content.slice(0, 100) + (msg.content.length > 100 ? '...' : ''),
         });
       }
+      else if (msg.type === 'file-offer') {
+        // A remote device wants to send us a file.
+        const fromId = msg.fromDeviceId || msg.deviceId;
+        console.log('[Beam SW] File offer from', fromId, ':', msg.fileName, msg.fileSize, 'bytes');
+
+        // Auto-accept: set up state to receive binary chunks.
+        pendingFileTransfer = {
+          transferId:   msg.transferId,
+          fileName:     msg.fileName,
+          fileSize:     msg.fileSize,
+          mimeType:     msg.mimeType,
+          fromDeviceId: fromId,
+          chunks:       [],
+          bytesReceived: 0,
+        };
+
+        // Send file-accept back to sender.
+        sendPairingMessage({
+          type:           'file-accept',
+          targetDeviceId: fromId,
+          rendezvousId:   msg.rendezvousId || pairingDeviceId,
+          transferId:     msg.transferId,
+        });
+
+        // Bind the relay session so binary frames are routed to us.
+        sendPairingMessage({
+          type:           'relay-bind',
+          transferId:     msg.transferId,
+          targetDeviceId: fromId,
+          rendezvousId:   msg.rendezvousId || pairingDeviceId,
+        });
+      }
+      else if (msg.type === 'file-accept') {
+        // The remote device accepted our file offer — binary send can proceed.
+        console.log('[Beam SW] File accepted by remote, transferId:', msg.transferId);
+      }
+      else if (msg.type === 'file-complete') {
+        // All binary chunks have been sent by the remote device.
+        if (pendingFileTransfer && msg.transferId === pendingFileTransfer.transferId) {
+          await assembleAndSaveFile();
+        }
+      }
     };
 
     pairingWs.onerror = (e) => {
@@ -219,6 +283,117 @@ export function sendPairingMessage(msg) {
   } else {
     console.warn('[Beam SW] sendPairingMessage: WebSocket not open');
   }
+}
+
+// ---------------------------------------------------------------------------
+// File transfer helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle an incoming binary WebSocket frame (a file data chunk).
+ * Appends the chunk to the pending file transfer's buffer.
+ *
+ * @param {ArrayBuffer|Blob} data - Raw binary frame data.
+ * @returns {Promise<void>}
+ */
+async function handleIncomingBinaryFrame(data) {
+  if (!pendingFileTransfer) return;
+
+  const bytes = data instanceof Blob
+    ? new Uint8Array(await data.arrayBuffer())
+    : new Uint8Array(data);
+
+  pendingFileTransfer.chunks.push(bytes);
+  pendingFileTransfer.bytesReceived += bytes.length;
+  console.log(
+    '[Beam SW] File chunk received:',
+    bytes.length, 'bytes, total:',
+    pendingFileTransfer.bytesReceived, '/', pendingFileTransfer.fileSize,
+  );
+}
+
+/**
+ * Assemble all received chunks into a single file and store it in session
+ * storage for the popup to trigger a download.
+ *
+ * The file data is stored as a base64 string because chrome.storage cannot
+ * hold ArrayBuffer values.
+ *
+ * @returns {Promise<void>}
+ */
+async function assembleAndSaveFile() {
+  const ft = pendingFileTransfer;
+  if (!ft) return;
+
+  console.log('[Beam SW] Assembling file:', ft.fileName, ft.bytesReceived, 'bytes');
+
+  // Combine all chunks into one contiguous buffer.
+  const totalSize = ft.chunks.reduce((s, c) => s + c.length, 0);
+  const combined = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const chunk of ft.chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  // Convert to base64 for storage (chrome.storage can't hold ArrayBuffer).
+  // Process in 32KB slices to avoid call-stack overflow on large files.
+  let base64 = '';
+  const SLICE = 32768;
+  for (let i = 0; i < combined.length; i += SLICE) {
+    base64 += String.fromCharCode.apply(null, combined.subarray(i, i + SLICE));
+  }
+  base64 = btoa(base64);
+
+  await chrome.storage.session.set({
+    receivedFile: {
+      fileName:     ft.fileName,
+      fileSize:     ft.fileSize,
+      mimeType:     ft.mimeType,
+      fromDeviceId: ft.fromDeviceId,
+      data:         base64,
+      timestamp:    Date.now(),
+    },
+  });
+
+  // Desktop notification so the user knows a file arrived.
+  chrome.notifications.create('file-' + Date.now(), {
+    type:    'basic',
+    iconUrl: 'icons/icon-128.png',
+    title:   'File Received',
+    message: ft.fileName + ' (' + formatSize(ft.fileSize) + ')',
+  });
+
+  // Release the relay session and clear state.
+  sendPairingMessage({ type: 'relay-release', transferId: ft.transferId });
+  pendingFileTransfer = null;
+}
+
+/**
+ * Format a byte count as a human-readable size string.
+ *
+ * @param {number} bytes
+ * @returns {string} e.g. "1.4 MB"
+ */
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+/**
+ * Send raw binary data through the active pairing WebSocket.
+ * Used by background.js to transmit file chunks to the relay.
+ *
+ * @param {ArrayBuffer} data - Binary payload to send.
+ * @returns {boolean} true if the data was sent; false if the socket is unavailable.
+ */
+export function sendBinary(data) {
+  if (pairingWs?.readyState === WebSocket.OPEN) {
+    pairingWs.send(data);
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
