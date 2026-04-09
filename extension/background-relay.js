@@ -306,10 +306,16 @@ async function handleIncomingBinaryFrame(data) {
   pendingFileTransfer.chunks.push(bytes);
   pendingFileTransfer.bytesReceived += bytes.length;
   console.log(
-    '[Beam SW] File chunk received:',
-    bytes.length, 'bytes, total:',
+    '[Beam SW] File chunk:',
+    bytes.length, 'B, total:',
     pendingFileTransfer.bytesReceived, '/', pendingFileTransfer.fileSize,
   );
+
+  // Auto-assemble when all bytes received — don't wait for file-complete message
+  if (pendingFileTransfer.bytesReceived >= pendingFileTransfer.fileSize) {
+    console.log('[Beam SW] All bytes received, assembling file');
+    await assembleAndSaveFile();
+  }
 }
 
 /**

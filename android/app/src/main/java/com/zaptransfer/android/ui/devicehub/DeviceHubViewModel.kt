@@ -97,6 +97,12 @@ class DeviceHubViewModel @Inject constructor(
                     ft.chunks.add(message.data)
                     ft.bytesReceived += message.data.size
                     Log.d(TAG, "File chunk: ${message.data.size} bytes, total: ${ft.bytesReceived}/${ft.fileSize}")
+                    // Auto-assemble when all bytes received
+                    if (ft.bytesReceived >= ft.fileSize) {
+                        Log.d(TAG, "All bytes received, saving file")
+                        saveReceivedFile(ft)
+                        pendingFileTransfer = null
+                    }
                 }
                 is RelayMessage.Text -> {
                     val json = message.json
@@ -393,20 +399,22 @@ class DeviceHubViewModel @Inject constructor(
                     put("rendezvousId", rendezvousId)
                 })
 
-                // 3. Wait for both sides to bind before streaming.
-                delay(1000)
+                // 3. Wait for receiver to bind before streaming.
+                delay(2000)
 
                 // 4. Stream binary chunks (200KB each, under 256KB limit).
+                // Small delay between chunks to avoid overwhelming the relay.
                 val chunkSize = 200 * 1024
                 var offset = 0
                 while (offset < bytes.size) {
                     val end = minOf(offset + chunkSize, bytes.size)
                     signalingClient.sendBinary(bytes.sliceArray(offset until end))
                     offset = end
+                    if (offset < bytes.size) delay(50) // pace chunks
                 }
 
-                // 5. Signal completion after a short delay for chunk delivery.
-                delay(500)
+                // 5. Signal completion.
+                delay(200)
                 signalingClient.send(JSONObject().apply {
                     put("type", "file-complete")
                     put("targetDeviceId", targetDeviceId)

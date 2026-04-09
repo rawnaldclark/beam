@@ -167,56 +167,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const { fileName, fileSize, mimeType, data, targetDeviceId, rendezvousId } = msg.payload;
       const transferId = 'tf-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 
-      // Send file-offer metadata via JSON signaling.
-      sendPairingMessage({
-        type: 'file-offer',
-        targetDeviceId,
-        rendezvousId,
-        fileName,
-        fileSize,
-        mimeType,
-        transferId,
-      });
+      // Send file-offer + relay-bind, then wait for file-accept before sending data.
+      sendPairingMessage({ type: 'file-offer', targetDeviceId, rendezvousId, fileName, fileSize, mimeType, transferId });
+      sendPairingMessage({ type: 'relay-bind', transferId, targetDeviceId, rendezvousId });
 
-      // Bind the relay session so binary frames are routed.
-      sendPairingMessage({
-        type: 'relay-bind',
-        transferId,
-        targetDeviceId,
-        rendezvousId,
-      });
-
-      // Wait for both sides to bind, then send binary data in chunks.
-      // The 1-second delay allows the receiver to process file-offer and
-      // send its own relay-bind before we start streaming chunks.
-      setTimeout(() => {
-        // data is a base64 string from the popup.
+      // Listen for file-accept, then send chunks
+      const _sendFileData = () => {
         const binaryStr = atob(data);
         const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          bytes[i] = binaryStr.charCodeAt(i);
-        }
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
 
-        // Split into 200KB chunks (safely under 256KB relay limit).
         const CHUNK_SIZE = 200 * 1024;
-        for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-          const chunk = bytes.slice(i, Math.min(i + CHUNK_SIZE, bytes.length));
-          sendBinary(chunk.buffer);
+        let offset = 0;
+
+        // Send chunks with small delays to avoid overwhelming the relay
+        function sendNextChunk() {
+          if (offset >= bytes.length) {
+            // All chunks sent — send file-complete + release after a brief pause
+            setTimeout(() => {
+              sendPairingMessage({ type: 'file-complete', targetDeviceId, rendezvousId, transferId });
+              sendPairingMessage({ type: 'relay-release', transferId });
+              console.log('[Beam SW] File send complete:', fileName);
+            }, 200);
+            return;
+          }
+          const end = Math.min(offset + CHUNK_SIZE, bytes.length);
+          sendBinary(bytes.slice(offset, end).buffer);
+          offset = end;
+          // 50ms between chunks — gives relay time to forward
+          setTimeout(sendNextChunk, 50);
         }
+        sendNextChunk();
+      };
 
-        // Send file-complete after a short delay to ensure all chunks arrive.
-        setTimeout(() => {
-          sendPairingMessage({
-            type: 'file-complete',
-            targetDeviceId,
-            rendezvousId,
-            transferId,
-          });
-
-          // Release relay session.
-          sendPairingMessage({ type: 'relay-release', transferId });
-        }, 500);
-      }, 1000);
+      // Wait 2 seconds for receiver to bind, then start sending.
+      // The receiver auto-assembles when bytesReceived >= fileSize.
+      setTimeout(_sendFileData, 2000);
 
       sendResponse({ ok: true, transferId });
       return true;
