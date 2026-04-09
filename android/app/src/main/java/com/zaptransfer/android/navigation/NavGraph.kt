@@ -150,8 +150,8 @@ fun BeamNavGraph(
         // ── Pairing: PIN entry ───────────────────────────────────────────────
         // Shares PairingViewModel scoped to the scan entry so state is continuous.
         composable(ROUTE_PAIRING_PIN) {
-            val scanEntry = navController.getBackStackEntry(ROUTE_PAIRING_SCAN)
-            val viewModel: PairingViewModel = hiltViewModel(scanEntry)
+            val scanEntry = try { navController.getBackStackEntry(ROUTE_PAIRING_SCAN) } catch (_: Exception) { null }
+            val viewModel: PairingViewModel = if (scanEntry != null) hiltViewModel(scanEntry) else hiltViewModel()
             PinEntryScreen(
                 viewModel = viewModel,
                 onNavigateToVerify = { navController.navigate(ROUTE_PAIRING_VERIFY) },
@@ -162,8 +162,8 @@ fun BeamNavGraph(
         // ── Pairing: SAS verification ────────────────────────────────────────
         // No nav arguments needed — peerPayload is held in PairingViewModel.Verifying state.
         composable(ROUTE_PAIRING_VERIFY) {
-            val scanEntry = navController.getBackStackEntry(ROUTE_PAIRING_SCAN)
-            val viewModel: PairingViewModel = hiltViewModel(scanEntry)
+            val scanEntry = try { navController.getBackStackEntry(ROUTE_PAIRING_SCAN) } catch (_: Exception) { null }
+            val viewModel: PairingViewModel = if (scanEntry != null) hiltViewModel(scanEntry) else hiltViewModel()
             SasVerificationScreen(
                 viewModel = viewModel,
                 onNavigateToNaming = {
@@ -179,8 +179,9 @@ fun BeamNavGraph(
         // ── Pairing: device naming ───────────────────────────────────────────
         // No nav arguments needed — deviceId is held in PairingViewModel.Naming state.
         composable(ROUTE_PAIRING_NAME) {
-            val scanEntry = navController.getBackStackEntry(ROUTE_PAIRING_SCAN)
-            val viewModel: PairingViewModel = hiltViewModel(scanEntry)
+            // Use own back stack entry for ViewModel — avoids crash when pairing/scan
+            // is already popped from the stack after navigation completes.
+            val viewModel: PairingViewModel = hiltViewModel()
             DeviceNamingScreen(
                 viewModel = viewModel,
                 onNavigateToHub = {
