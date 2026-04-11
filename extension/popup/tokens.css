@@ -1,0 +1,164 @@
+/* ==========================================================================
+   Beam Design Tokens — v1 (dark-only)
+   ==========================================================================
+
+   Single source of truth for the Beam redesign token layer on Chrome. All
+   tokens are prefixed with `--beam-` to coexist safely with the existing
+   `--bg` / `--text-hi` / `--primary` variables in `popup.css` during the
+   migration. This file is loaded BEFORE `popup.css` from `popup.html` and
+   defines ONLY new variables. Existing rules in `popup.css` are untouched
+   and keep their current visual output — this file is intentionally inert
+   until Phase 1c migrates component rules to consume these tokens.
+
+   Authoritative reference: docs/design/2026-04-11-design-direction-v1.md §6
+
+   Do not add values here that are not in the design direction. Do not
+   edit values here without updating the direction doc in lockstep —
+   these must stay in sync with the Android BeamTokens.kt file.
+   ========================================================================== */
+
+:root {
+
+  /* ─── Color — dark mode only (v1) ───────────────────────────────────── */
+
+  /* Canvas and surfaces. Depth is expressed by stepping bg/0 -> bg/1 -> bg/2
+     (plus hairline borders), not by shadows. */
+  --beam-bg-0: #0A0B0D;  /* canvas — popup background, main scroll surface */
+  --beam-bg-1: #111316;  /* surface — lists, cards, staged strips */
+  --beam-bg-2: #181A1F;  /* elevated — popovers, bottom sheets, full-surface replacements */
+
+  /* Borders and focus. */
+  --beam-border-subtle: #1F232A;  /* default hairline between rows and around cards */
+  --beam-border-strong: #2A2F38;  /* emphasized outlines (retry chip, focused input) */
+  --beam-focus-ring:    #5BE4E4;  /* 1px accent ring for keyboard focus */
+
+  /* Text. Four steps: hi, mid, lo, disabled. */
+  --beam-text-hi:       #F2F4F7;  /* primary content — device names, headings, row body */
+  --beam-text-mid:      #9BA3AE;  /* secondary — metadata, section headers */
+  --beam-text-lo:       #6B7280;  /* tertiary — placeholders, timestamps, inactive */
+  --beam-text-disabled: #3F4451;  /* disabled text and iconography */
+
+  /* Accent (Signal Cyan). One color carries focus ring, selection, progress,
+     and primary button. See contrast-audit note at bottom. */
+  --beam-accent:        #5BE4E4;  /* full opacity — focus ring, progress fill, primary button bg */
+  --beam-accent-hover:  #7BEDED;
+  --beam-accent-12:     rgba(91, 228, 228, 0.12);  /* selection fill (supplementary; primary cue is 2px left border) */
+
+  /* Semantic — all muted, never bright. */
+  --beam-success:    #5FB88C;  /* transfer complete glyph + success-12 flash */
+  --beam-success-12: rgba(95, 184, 140, 0.12);
+  --beam-warning:    #D4A55F;  /* paused / slow / reconnecting */
+  --beam-danger:     #D46F6F;  /* failed transfers, surface-wide errors */
+  --beam-danger-12:  rgba(212, 111, 111, 0.12);
+
+  /* Presence (status dots). */
+  --beam-online:  #5FB88C;  /* online dot fill (same as success) */
+  --beam-offline: #6B7280;  /* offline dot ring (same as text-lo) */
+
+  /* ─── Typography ────────────────────────────────────────────────────── */
+
+  /* Primary sans: Inter Variable, bundled in a later sub-phase via
+     @font-face and web_accessible_resources. Until then, the system stack
+     is the effective fallback — it renders close enough that components
+     consuming --beam-font-sans will not break visually before the font
+     ships. */
+  --beam-font-sans: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --beam-font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace;
+
+  /* Pixel scale. Body is base=13. Never use arbitrary sizes outside this scale. */
+  --beam-size-xs:    11px;  /* shortcut chips, fine metadata */
+  --beam-size-sm:    12px;  /* section headers, secondary rows, mono metadata */
+  --beam-size-base:  13px;  /* default body — device names, row content, most labels */
+  --beam-size-md:    14px;  /* section titles, emphasized row leads */
+  --beam-size-lg:    16px;  /* surface titles (pairing, settings) */
+  --beam-size-xl:    22px;  /* pairing display type (SAS, PIN, hero alias on Android — mirrors sp here) */
+
+  /* Three weights only. */
+  --beam-weight-regular:  400;
+  --beam-weight-medium:   500;
+  --beam-weight-semibold: 600;
+
+  /* Line heights. Tight by desktop-app convention. */
+  --beam-lh-body:    1.4;
+  --beam-lh-heading: 1.2;
+  --beam-lh-mono:    1.0;  /* mono chips are single-line and snug */
+
+  /* Letter spacing. Subtly negative on larger sizes. */
+  --beam-tracking-tight:   -0.01em;  /* applied at md+ */
+  --beam-tracking-default: 0;
+  --beam-tracking-chip:    0.02em;   /* xs mono chips */
+
+  /* OpenType features: tabular numerics always on for percent, size, speed,
+     PIN, SAS labels, relative timestamps. Character variant 11 disambiguates
+     1/l/I on Inter. */
+  --beam-font-feature-numeric: 'tnum' 1, 'cv11' 1;
+
+  /* ─── Spacing ───────────────────────────────────────────────────────── */
+
+  /* 4px base grid. Tokens s-1 through s-8 scale as 4, 8, 12, 16, 20, 24, 32, 40. */
+  --beam-space-0: 0;
+  --beam-space-1: 4px;
+  --beam-space-2: 8px;
+  --beam-space-3: 12px;
+  --beam-space-4: 16px;
+  --beam-space-5: 20px;
+  --beam-space-6: 24px;
+  --beam-space-7: 32px;
+  --beam-space-8: 40px;
+
+  /* ─── Radius ────────────────────────────────────────────────────────── */
+
+  /* Sharp, not pillowy. Nothing above 8 except the pill. */
+  --beam-radius-sm:   4px;   /* chips, tags, shortcut chips, key chips */
+  --beam-radius-md:   6px;   /* buttons, inputs, row selection fills */
+  --beam-radius-lg:   8px;   /* popovers, bottom sheets, full-surface replacements */
+  --beam-radius-pill: 999px; /* status dots, avatar circles */
+
+  /* ─── Elevation ─────────────────────────────────────────────────────── */
+
+  /* Zero shadows in dark mode. Depth comes from bg level steps plus
+     border-subtle hairlines. If a future light-mode token set is added,
+     it may introduce one subtle elevation only for sheets/popovers. */
+  --beam-shadow-none: 0 0 0 0 transparent;
+
+  /* ─── Motion ────────────────────────────────────────────────────────── */
+
+  /* Three durations, two easings. No bounces, no oscillation. */
+  --beam-dur-fast: 120ms;  /* focus ring, hover fill, selection commit, ring fade-in */
+  --beam-dur-base: 180ms;  /* row state change, sheet slide, popup open */
+  --beam-dur-slow: 260ms;  /* pairing step transitions, empty-to-populated staggers */
+
+  --beam-ease-out: cubic-bezier(0.2, 0, 0, 1);  /* enters, state-in, appearances */
+  --beam-ease-in:  cubic-bezier(0.4, 0, 1, 1);  /* exits, dismissals */
+
+  /* ─── Row metrics (component-level, but tokenized) ──────────────────── */
+
+  /* Chrome row height is 36px; padding 12 horizontal / 8 vertical. */
+  --beam-row-height:  36px;
+  --beam-row-pad-x:   12px;
+  --beam-row-pad-y:   8px;
+
+  /* Status dot and ring-progress diameters. */
+  --beam-dot-size:    8px;
+  --beam-ring-size:   16px;  /* leading-slot ring-progress on Chrome */
+
+  /* Shortcut chip metrics. Keyboard footer only; no other surface consumes these. */
+  --beam-chip-height: 20px;
+  --beam-chip-pad-x:  6px;
+}
+
+/* ==========================================================================
+   Contrast audit note — Signal Cyan at 12% alpha
+
+   The `--beam-accent-12` selection-fill is a SUPPLEMENTARY depth cue; the
+   PRIMARY indicator for selected state is a 2px accent left border on the
+   device/transfer row. Contrast of a 12% accent fill on bg/0 #0A0B0D is
+   approximately 2.5:1 effective luminance — below WCAG AA for non-text UI
+   (3:1). This is acceptable ONLY because the 2px left border carries the
+   real signal. If implementation testing reveals that the supplementary
+   fill is not visible enough to reinforce selection, bump the alpha to
+   0.16 or 0.20 and update this comment.
+
+   The primary, progress, and focus-ring uses of --beam-accent are at 100%
+   opacity and pass AA comfortably against bg/0 and bg/1.
+   ========================================================================== */

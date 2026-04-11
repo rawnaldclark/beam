@@ -4,6 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=360">
   <title>Beam</title>
+  <!--
+    tokens.css defines the Beam design-system tokens introduced in the
+    Phase 1 redesign (see docs/design/2026-04-11-design-direction-v1.md).
+    It is loaded FIRST so popup.css's existing :root declarations win on
+    any accidental name collision — the migration is additive and nothing
+    in the current UI consumes the --beam-* variables yet.
+  -->
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
