@@ -46,6 +46,18 @@ const DEFAULT_AUTH_TIMEOUT_MS = 30_000;
 /** Length of the challenge in bytes (transmitted as 64 lowercase hex chars). */
 const CHALLENGE_BYTES = 32;
 
+/**
+ * Maximum number of concurrent UNAUTHENTICATED WebSocket connections allowed
+ * from a single client IP address. Authenticated sockets are not counted.
+ *
+ * Rationale (Beam audit finding #2): the rate limiter's global 50-slot cap on
+ * concurrent devices can be exhausted by a single attacker IP that opens many
+ * sockets and simply never completes the auth handshake. Because the auth
+ * timeout is 30 s, an attacker can trivially deny service for every other
+ * user by keeping the unauthenticated pool full. Per-IP accounting fixes that.
+ */
+export const MAX_UNAUTH_PER_IP = 5;
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -125,6 +137,16 @@ export class Gateway extends EventEmitter {
     /** Configurable auth timeout in milliseconds. @type {number} */
     this.authTimeoutMs = authTimeoutMs;
 
+    /**
+     * Per-IP count of concurrent UNAUTHENTICATED WebSocket connections.
+     * Incremented in `_onConnection`, decremented on successful auth
+     * (`_handleAuth`) or on close of a still-unauthenticated socket
+     * (`_onClose`). See `MAX_UNAUTH_PER_IP` for rationale.
+     *
+     * @type {Map<string, number>}
+     */
+    this.unauthCountByIp = new Map();
+
     /** External message handler set via onMessage(). @type {Function|null} */
     this._messageHandler = null;
 
@@ -181,7 +203,10 @@ export class Gateway extends EventEmitter {
    * @param {import('ws').WebSocketServer} wss
    */
   _attachToWss(wss) {
-    wss.on('connection', (ws) => this._onConnection(ws));
+    // The `ws` library passes (ws, req) — forward both so `_onConnection`
+    // can extract the real client IP from the upgrade request for per-IP
+    // unauthenticated-connection accounting.
+    wss.on('connection', (ws, req) => this._onConnection(ws, req));
   }
 
   // -------------------------------------------------------------------------
@@ -190,12 +215,60 @@ export class Gateway extends EventEmitter {
 
   /**
    * Handles a new inbound WebSocket connection.
-   * Generates a random challenge, stores it, sends it to the client, and
-   * schedules an auth timeout.
+   *
+   * Steps:
+   *   1. Extract client IP from the upgrade request. Fly.io's edge proxy sets
+   *      `Fly-Client-IP`; behind any other reverse proxy we fall back to the
+   *      raw TCP remote address. We do NOT trust `X-Forwarded-For` here —
+   *      that header is owned by the rate-limiter layer in `server.js` and
+   *      using it in two places would make the two caps disagree.
+   *   2. Enforce `MAX_UNAUTH_PER_IP`: if this IP already has the maximum
+   *      number of still-unauthenticated sockets, close the new socket with
+   *      WebSocket code 1008 (policy violation) and bail. Authenticated
+   *      sockets are free — only the unauthenticated pool is capped.
+   *   3. Generate a fresh 32-byte challenge and send it.
+   *   4. Schedule an auth timeout and wire up message/close/error handlers.
    *
    * @param {import('ws').WebSocket} ws
+   * @param {import('node:http').IncomingMessage} [req] - Upgrade request; when
+   *   omitted (e.g. legacy tests that call _onConnection directly without a
+   *   req) the per-IP cap cannot be enforced and the connection is treated
+   *   as anonymous. Production paths always pass `req`.
    */
-  _onConnection(ws) {
+  _onConnection(ws, req) {
+    // --- Per-IP unauthenticated connection cap (Beam audit #2) -------------
+    //
+    // Extract the best-effort real client IP. `Fly-Client-IP` is set by
+    // Fly.io's edge; other proxies are not supported for this check, by
+    // design — see the doc comment above for why.
+    let ip;
+    if (req) {
+      ip =
+        (req.headers && req.headers['fly-client-ip']) ||
+        (req.socket && req.socket.remoteAddress) ||
+        'unknown';
+    } else {
+      ip = 'unknown';
+    }
+
+    const currentUnauth = this.unauthCountByIp.get(ip) ?? 0;
+    if (currentUnauth >= MAX_UNAUTH_PER_IP) {
+      // Too many pending-auth sockets for this IP — refuse immediately.
+      // 1008 = policy violation. We do NOT send a challenge or register
+      // any state; the socket simply closes.
+      try {
+        ws.close(1008, 'unauth connection limit');
+      } catch {
+        /* socket may already be torn down — ignore */
+      }
+      return;
+    }
+
+    // Reserve a slot and remember it on the socket so we can decrement
+    // exactly once, whether via successful auth or via close-while-unauth.
+    this.unauthCountByIp.set(ip, currentUnauth + 1);
+    ws._beamUnauthIp = ip;
+
     // Generate a fresh 32-byte challenge for this connection
     const challengeBytes = randomBytes(CHALLENGE_BYTES);
     const challengeHex = challengeBytes.toString('hex');
@@ -358,6 +431,10 @@ export class Gateway extends EventEmitter {
 
     // --- Auth success ---
     this.pendingChallenges.delete(ws);
+    // Release the per-IP unauthenticated slot now that this socket is a
+    // real authenticated peer. `_releaseUnauthSlot` is idempotent: calling
+    // it again from `_onClose` after auth success is a no-op.
+    this._releaseUnauthSlot(ws);
 
     // Zombie-tolerant re-auth: if this deviceId already has an authenticated
     // socket (e.g. the client reconnected before the old socket's TCP close
@@ -379,6 +456,35 @@ export class Gateway extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
+  // Private — Per-IP unauth slot accounting
+  // -------------------------------------------------------------------------
+
+  /**
+   * Releases the per-IP unauthenticated-connection slot reserved for `ws`
+   * back to `this.unauthCountByIp`. Safe to call multiple times — the slot
+   * marker (`ws._beamUnauthIp`) is cleared on the first call, making
+   * subsequent calls no-ops.
+   *
+   * This is called in two places:
+   *   - `_handleAuth` on auth success (socket is now authenticated)
+   *   - `_onClose` (covers unauthenticated socket closes)
+   *
+   * @param {import('ws').WebSocket} ws
+   */
+  _releaseUnauthSlot(ws) {
+    const ip = ws._beamUnauthIp;
+    if (ip === undefined) return;
+    ws._beamUnauthIp = undefined;
+
+    const count = this.unauthCountByIp.get(ip) ?? 0;
+    if (count <= 1) {
+      this.unauthCountByIp.delete(ip);
+    } else {
+      this.unauthCountByIp.set(ip, count - 1);
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Private — Disconnect cleanup
   // -------------------------------------------------------------------------
 
@@ -391,6 +497,11 @@ export class Gateway extends EventEmitter {
   _onClose(ws) {
     // Remove pending challenge (covers unauthenticated closes)
     this.pendingChallenges.delete(ws);
+
+    // Release the per-IP unauth slot if this socket never authenticated.
+    // Idempotent — returns immediately if the slot was already released
+    // by a successful auth.
+    this._releaseUnauthSlot(ws);
 
     // Clean up authenticated device registration — but ONLY if the closing
     // ws is still the current registration for its deviceId.

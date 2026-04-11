@@ -19,7 +19,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as ed from '@noble/ed25519';
 import { sha256, sha512 } from '@noble/hashes/sha2.js';
 
-import { Gateway } from '../src/gateway.js';
+import { Gateway, MAX_UNAUTH_PER_IP } from '../src/gateway.js';
+import { createVerifyClient } from '../src/origin.js';
 
 // ---------------------------------------------------------------------------
 // Wire noble-ed25519 v2 synchronous SHA-512 (required for signSync / etc.)
@@ -84,7 +85,14 @@ function signAuth(challengeHex, timestamp, privKey) {
 function createTestServer(gatewayOpts = {}) {
   return new Promise((resolve, reject) => {
     const server = http.createServer();
-    const wss = new WebSocketServer({ server });
+    // Match the production WebSocketServer configuration: origin allowlist
+    // runs before the WS handshake completes. Tests use `onReject: () => {}`
+    // to silence the structured warn output that would otherwise pollute
+    // the test report when the origin-rejection test fires.
+    const wss = new WebSocketServer({
+      server,
+      verifyClient: createVerifyClient({ onReject: () => {} }),
+    });
     const gateway = new Gateway({ wss, ...gatewayOpts });
 
     server.listen(0, '127.0.0.1', () => {
@@ -461,5 +469,171 @@ describe('Gateway', () => {
     } finally {
       await closeServer(zombieCtx.server);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 10 — Origin allowlist (Beam audit #2)
+  // -------------------------------------------------------------------------
+  describe('origin allowlist', () => {
+    /** @type {{ server: http.Server, wss: WebSocketServer, gateway: Gateway, port: number }} */
+    let oCtx;
+
+    before(async () => { oCtx = await createTestServer(); });
+    after(async () => { await closeServer(oCtx.server); });
+
+    /**
+     * Attempts to open a WebSocket with a specific Origin header and
+     * resolves with 'open' or 'rejected' depending on which event fires
+     * first.
+     *
+     * @param {number} port
+     * @param {string|undefined} origin - Pass undefined to omit Origin.
+     * @returns {Promise<'open'|'rejected'>}
+     */
+    function tryOpen(port, origin) {
+      return new Promise((resolve) => {
+        const headers = {};
+        if (origin !== undefined) headers.Origin = origin;
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers });
+
+        const done = (outcome) => {
+          try { ws.close(); } catch { /* ignore */ }
+          resolve(outcome);
+        };
+
+        ws.once('open', () => done('open'));
+        // The `ws` client surfaces a 403 upgrade failure as an 'error'
+        // followed by 'close' — 'unexpected-response' is only emitted in
+        // certain configurations. We treat any error-before-open as a
+        // rejection for the purposes of this test.
+        ws.once('error', () => done('rejected'));
+      });
+    }
+
+    it('rejects a non-extension Origin with 403', async () => {
+      const outcome = await tryOpen(oCtx.port, 'https://evil.com');
+      assert.equal(outcome, 'rejected', 'https://evil.com origin must be rejected');
+    });
+
+    it('accepts a chrome-extension:// Origin', async () => {
+      const outcome = await tryOpen(oCtx.port, 'chrome-extension://abcdefghijklmnop');
+      assert.equal(outcome, 'open', 'chrome-extension origin must be accepted');
+    });
+
+    it('accepts connections with no Origin header (Android / CLI)', async () => {
+      const outcome = await tryOpen(oCtx.port, undefined);
+      assert.equal(outcome, 'open', 'missing Origin must be accepted');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 11 — Per-IP unauthenticated connection cap (Beam audit #2)
+  // -------------------------------------------------------------------------
+  describe('per-IP unauthenticated connection cap', () => {
+    it('caps concurrent unauth sockets at MAX_UNAUTH_PER_IP and releases on auth', async () => {
+      // Fresh server: we need a clean `unauthCountByIp` map.
+      const capCtx = await createTestServer();
+      try {
+        assert.equal(MAX_UNAUTH_PER_IP, 5, 'expected default cap of 5');
+
+        // --- Open the first 5 sockets; each must get a challenge. ---------
+        const sockets = [];
+        const challenges = [];
+        for (let i = 0; i < MAX_UNAUTH_PER_IP; i++) {
+          const { ws, challenge } = await connectAndGetChallenge(capCtx.port);
+          sockets.push(ws);
+          challenges.push(challenge);
+        }
+        assert.equal(sockets.length, 5);
+        assert.equal(challenges.length, 5);
+        for (const c of challenges) {
+          assert.match(c, /^[0-9a-f]{64}$/i);
+        }
+
+        // --- 6th connection: must close immediately with code 1008. -------
+        const sixthClose = await new Promise((resolve) => {
+          const ws6 = new WebSocket(`ws://127.0.0.1:${capCtx.port}`);
+          let gotChallenge = false;
+          ws6.on('message', (data) => {
+            try {
+              const m = JSON.parse(data.toString());
+              if (m.type === 'challenge') gotChallenge = true;
+            } catch { /* ignore */ }
+          });
+          ws6.once('close', (code) => resolve({ code, gotChallenge }));
+          ws6.once('error', () => { /* swallow — close follows */ });
+        });
+
+        assert.equal(sixthClose.code, 1008, 'over-cap socket must close with 1008');
+        assert.equal(sixthClose.gotChallenge, false, 'over-cap socket must not receive a challenge');
+
+        // --- Authenticate one of the first 5 → frees a slot. --------------
+        const { privKey, pubKey } = generateKeypair();
+        const deviceId = deriveDeviceId(pubKey);
+        const publicKey = Buffer.from(pubKey).toString('base64');
+        const timestamp = Date.now();
+        const signature = signAuth(challenges[0], timestamp, privKey);
+
+        const authReply = await sendAndReceive(sockets[0], {
+          type: 'auth', deviceId, publicKey, signature, timestamp,
+        });
+        assert.equal(authReply.type, 'auth-ok');
+
+        // --- A new 6th connection should now succeed. ---------------------
+        const { ws: ws6b, challenge: c6b } = await connectAndGetChallenge(capCtx.port);
+        assert.match(c6b, /^[0-9a-f]{64}$/i,
+          'new connection after auth should get a challenge');
+        ws6b.close();
+
+        // Clean up the original 5.
+        for (const ws of sockets) {
+          try { ws.close(); } catch { /* ignore */ }
+        }
+      } finally {
+        await closeServer(capCtx.server);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 12 — Top-level process error handlers registered (Beam audit #4)
+  // -------------------------------------------------------------------------
+  describe('process error handlers', () => {
+    it('registers uncaughtException and unhandledRejection handlers', async () => {
+      // Importing ../src/server.js directly would start the real HTTP server
+      // on PORT 8080, which is not what we want in a unit test. Instead we
+      // import the module for its side effects under a dynamic import with
+      // a sacrificial ephemeral port via env. The module installs the
+      // process-level handlers at import time.
+      const prevPort = process.env.PORT;
+      process.env.PORT = '0';
+      let mod;
+      try {
+        mod = await import('../src/server.js');
+      } finally {
+        if (prevPort === undefined) delete process.env.PORT;
+        else process.env.PORT = prevPort;
+      }
+
+      try {
+        assert.ok(
+          process.listenerCount('uncaughtException') > 0,
+          'expected at least one uncaughtException listener',
+        );
+        assert.ok(
+          process.listenerCount('unhandledRejection') > 0,
+          'expected at least one unhandledRejection listener',
+        );
+      } finally {
+        // Best-effort teardown so the test runner can exit: close the
+        // WebSocketServer and the underlying HTTP server started by the
+        // module's top-level side effects.
+        try { mod.wss.close(); } catch { /* ignore */ }
+        await new Promise((resolve) => {
+          try { mod.httpServer.close(() => resolve()); }
+          catch { resolve(); }
+        });
+      }
+    });
   });
 });

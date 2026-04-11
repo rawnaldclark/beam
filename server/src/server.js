@@ -45,6 +45,7 @@ import { Signaling }       from './signaling.js';
 import { DataRelay }       from './relay.js';
 import { RateLimiter }     from './ratelimit.js';
 import { MSG }             from './protocol.js';
+import { createVerifyClient } from './origin.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -128,41 +129,104 @@ const httpServer = createServer((req, res) => {
 // ---------------------------------------------------------------------------
 
 /**
- * WebSocketServer with two transport-level safeguards:
- *   1. maxPayload rejects over-sized frames at the ws library level.
- *   2. verifyClient enforces the per-IP connection limit before the TCP
- *      handshake completes, minimising resource consumption for abusive clients.
+ * Origin allowlist verifier. Rejects any non-empty Origin header that is not a
+ * `chrome-extension://` URL with HTTP 403 before the WebSocket handshake
+ * completes. Absent or empty Origin is accepted, which is how Android OkHttp
+ * and CLI clients connect (they do not send Origin). Exported as a separate
+ * module so the test suite can construct a matching WebSocketServer without
+ * copying the policy.
  *
- * verifyClient is called synchronously during the HTTP upgrade; returning false
- * closes the socket with a 429 Too Many Requests response.
+ * @type {ReturnType<typeof createVerifyClient>}
+ */
+const verifyOrigin = createVerifyClient();
+
+/**
+ * WebSocketServer with three transport-level safeguards:
+ *   1. maxPayload rejects over-sized frames at the ws library level.
+ *   2. verifyClient first runs the origin allowlist (rejects third-party web
+ *      pages with 403) and then the per-IP connection rate limit (rejects
+ *      abusive IPs with 429).
+ *   3. The Gateway layer enforces an additional per-IP cap on concurrent
+ *      UNAUTHENTICATED sockets — see gateway.js `MAX_UNAUTH_PER_IP`.
+ *
+ * verifyClient is called during the HTTP upgrade; returning false closes the
+ * socket with the supplied status code.
  */
 const wss = new WebSocketServer({
   server:     httpServer,
   maxPayload: MAX_PAYLOAD_BYTES,
 
   /**
-   * @param {{ req: import('node:http').IncomingMessage }} info
+   * @param {{ req: import('node:http').IncomingMessage, origin?: string }} info
    * @param {(result: boolean, code?: number, message?: string) => void} cb
    */
   verifyClient(info, cb) {
-    // Extract the real client IP, respecting common reverse-proxy headers.
-    const ip =
-      (info.req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() ||
-      info.req.socket.remoteAddress ||
-      'unknown';
+    // --- Layer 1: Origin allowlist -----------------------------------------
+    verifyOrigin(info, (allowed, code, message) => {
+      if (!allowed) {
+        cb(allowed, code, message);
+        return;
+      }
 
-    if (!rateLimiter.allowConnection(ip)) {
-      // Reject: too many connections from this IP.
-      cb(false, 429, 'Too Many Connections');
-      return;
-    }
+      // --- Layer 2: Per-IP connection rate limit ---------------------------
+      // Extract the real client IP, respecting common reverse-proxy headers.
+      // `Fly-Client-IP` is set by Fly.io's edge; `X-Forwarded-For` is accepted
+      // for any other reverse proxy deployment.
+      const ip =
+        (info.req.headers['fly-client-ip'] ?? '').toString().trim() ||
+        (info.req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() ||
+        info.req.socket.remoteAddress ||
+        'unknown';
 
-    // Accept: attach the resolved IP to the request so the connection handler
-    // can retrieve it without repeating the header-parsing logic.
-    info.req._clientIp = ip;
-    cb(true);
+      if (!rateLimiter.allowConnection(ip)) {
+        cb(false, 429, 'Too Many Connections');
+        return;
+      }
+
+      // Accept: attach the resolved IP to the request so the connection
+      // handler can retrieve it without repeating the header-parsing logic.
+      info.req._clientIp = ip;
+      cb(true);
+    });
   },
 });
+
+// ---------------------------------------------------------------------------
+// Top-level fatal error handlers (Beam audit finding #4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Logs a fatal error as structured JSON, best-effort closes the
+ * WebSocketServer, then schedules a delayed `process.exit(1)` so Fly.io
+ * (or any other orchestrator) restarts the machine cleanly.
+ *
+ * The 1.5 s delay gives in-flight log writes time to flush to stdout before
+ * the process exits. The timer is `.unref()`d so a clean shutdown is not
+ * delayed by it.
+ *
+ * @param {string} event - 'uncaughtException' or 'unhandledRejection'
+ * @param {unknown} err  - The thrown value (may not be an Error instance)
+ */
+function fatal(event, err) {
+  // eslint-disable-next-line no-console
+  console.error(JSON.stringify({
+    level: 'fatal',
+    event,
+    name: err?.name,
+    message: err?.message,
+    stack: err?.stack,
+    timestamp: new Date().toISOString(),
+  }));
+  try {
+    wss.close();
+  } catch {
+    /* ignore — already closed, or never opened */
+  }
+  setTimeout(() => process.exit(1), 1500).unref();
+}
+
+process.on('uncaughtException',  (err) => fatal('uncaughtException', err));
+process.on('unhandledRejection', (err) => fatal('unhandledRejection', err));
 
 // ---------------------------------------------------------------------------
 // Application modules
@@ -237,7 +301,9 @@ wss.on('connection', (ws, req) => {
 
   // Delegate the connection to the gateway for the auth handshake.
   // Gateway._onConnection() sets up message/close handlers on ws internally.
-  gateway._onConnection(ws);
+  // `req` is forwarded so the gateway can apply its per-IP unauthenticated
+  // connection cap against the real client IP.
+  gateway._onConnection(ws, req);
 
   // Close handler: clean up rate-limiter state for this connection.
   // Note: gateway._onClose() is also registered by _onConnection(); both fire
