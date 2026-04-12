@@ -1,9 +1,16 @@
 package com.zaptransfer.android.ui.devicehub
 
+import android.os.Build
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,64 +22,58 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import com.zaptransfer.android.ui.theme.BeamIcons
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.zaptransfer.android.data.db.entity.ClipboardEntryEntity
 import com.zaptransfer.android.data.db.entity.PairedDeviceEntity
-
-// ── Status colours — from the Beam design token system ────────────────────────
+import com.zaptransfer.android.data.db.entity.TransferHistoryEntity
+import com.zaptransfer.android.ui.theme.BeamCorner
+import com.zaptransfer.android.ui.theme.BeamIcons
 import com.zaptransfer.android.ui.theme.BeamPalette
-private val OnlineGreen = BeamPalette.online    // #5FB88C — muted green
-private val OfflineGrey = BeamPalette.offline   // #6B7280 — cool gray
+import com.zaptransfer.android.ui.theme.BeamRow
+import com.zaptransfer.android.ui.theme.BeamSpace
+import com.zaptransfer.android.ui.theme.BeamTextStyle
+import java.text.DecimalFormat
+import kotlin.math.abs
 
 /**
- * Device Hub — the main screen of the Beam application.
+ * Device Hub — the main screen of the Beam application (Beam v1 design).
  *
- * Layout:
- *  - [TopAppBar] with the "Beam" brand title and a settings gear icon.
- *  - [LazyColumn] body:
- *      - If no devices are paired: [EmptyStateOnboarding] replaces the list.
- *      - If devices exist: each is rendered as a [DeviceCard].
- *      - Below the device list: a "Recent Transfers" section with [TransferHistoryItem] rows.
- *  - [ExtendedFloatingActionButton] labelled "+ Pair Device" that navigates to the QR scanner.
+ * Layout zones:
+ *  1. [BeamTopBar] — device alias + online dot + settings gear.
+ *  2. [HeroCard] — top online paired device with "pick file" / "send clipboard" verbs.
+ *  3. Other Devices section — flat 64dp rows for remaining paired devices.
+ *  4. Activity section — unified time-sorted list of recent transfers + clipboard items.
+ *  5. [BeamBottomBar] — "Pair" and "Settings" ghost buttons (replaces the old FAB).
  *
- * Navigation contract:
- *  - [onNavigateToPairScan]: push the QR scanner screen.
- *  - [onNavigateToPairPin]: push the PIN entry screen.
- *  - [onNavigateToSettings]: push the settings screen.
- *  - [onSendFile]: open the system file picker for the given device ID.
- *  - [onSendText]: open the clipboard/text send bottom sheet for the given device ID.
+ * Empty state: centered message with a "Pair a device" primary button.
  *
  * @param viewModel            Hilt-provided [DeviceHubViewModel]; default via [hiltViewModel].
  * @param onNavigateToPairScan Navigate to pairing/scan.
@@ -104,56 +105,55 @@ fun DeviceHubScreen(
         }
     }
 
-    // Build a quick lookup map for device names in the history section.
-    // This is O(n) per recomposition where n = number of paired devices — acceptable
-    // given that the device list is bounded to a small number (dozens at most).
+    // Build a lookup map for device names used in activity rows.
     val deviceNameById: Map<String, String> = remember(uiState.devices) {
         uiState.devices.associate { it.entity.deviceId to it.entity.name }
     }
 
+    // Sort devices: online first, then by name. The hero is the first entry.
+    val sortedDevices = remember(uiState.devices) {
+        uiState.devices.sortedWith(compareByDescending<PairedDeviceUi> { it.isOnline }.thenBy { it.entity.name })
+    }
+
+    val heroDevice = sortedDevices.firstOrNull()
+    val otherDevices = if (sortedDevices.size > 1) sortedDevices.drop(1) else emptyList()
+
+    // Merge transfers and clipboard items into a unified activity list, capped at 8.
+    val activityItems = remember(recentTransfers, clipboardItems) {
+        buildActivityList(recentTransfers, clipboardItems, deviceNameById)
+    }
+
+    // The user's own device alias — read from Build.MODEL as the ViewModel
+    // does not expose userPreferences directly and we must not modify it.
+    val ownDeviceAlias = remember { Build.MODEL }
+
+    // Relay connection status is not directly exposed by the ViewModel either.
+    // We approximate "relay connected" by checking whether any device is online,
+    // which is accurate in practice since presence comes from the relay.
+    val isRelayConnected = remember(uiState.devices) {
+        uiState.devices.any { it.isOnline }
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Beam",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                actions = {
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(
-                            imageVector = BeamIcons.settings,
-                            contentDescription = "Settings",
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
+            BeamTopBar(
+                deviceAlias = ownDeviceAlias,
+                isRelayConnected = isRelayConnected,
+                onSettingsClick = onNavigateToSettings,
             )
         },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = onNavigateToPairScan,
-                icon = {
-                    Icon(
-                        imageVector = BeamIcons.plus,
-                        contentDescription = null,
-                    )
-                },
-                text = { Text("Pair Device") },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            )
+        bottomBar = {
+            if (uiState.devices.isNotEmpty()) {
+                BeamBottomBar(
+                    onPairClick = onNavigateToPairScan,
+                    onSettingsClick = onNavigateToSettings,
+                )
+            }
         },
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = BeamPalette.bg0,
     ) { innerPadding ->
         when {
-            // Spinner on first load before Room emits
+            // Spinner on first load before Room emits.
             uiState.isLoading -> {
                 Box(
                     modifier = Modifier
@@ -161,281 +161,625 @@ fun DeviceHubScreen(
                         .padding(innerPadding),
                     contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator()
+                    // Minimal loading indicator — just a text label in Beam style.
+                    Text(
+                        text = "Loading\u2026",
+                        style = BeamTextStyle.baseRegular,
+                        color = BeamPalette.textMid,
+                    )
                 }
             }
 
-            // Empty state when no paired devices exist
+            // Empty state: no paired devices.
             uiState.devices.isEmpty() -> {
-                EmptyStateOnboarding(
-                    onScanQrCode = onNavigateToPairScan,
-                    onEnterPin = onNavigateToPairPin,
+                EmptyState(
+                    onPairClick = onNavigateToPairScan,
                     modifier = Modifier.padding(innerPadding),
                 )
             }
 
-            // Populated device list + history
+            // Populated main screen.
             else -> {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding),
-                    verticalArrangement = Arrangement.spacedBy(0.dp),
+                    contentPadding = PaddingValues(bottom = BeamSpace.s4),
                 ) {
-                    // ── Section header: Devices ─────────────────────────────────
-                    item {
-                        SectionHeader(title = "My Devices")
-                    }
-
-                    // ── Device cards ────────────────────────────────────────────
-                    items(
-                        items = uiState.devices,
-                        key = { it.entity.deviceId },
-                    ) { deviceUi ->
-                        DeviceCard(
-                            device = deviceUi,
-                            onSendFile = { onSendFile(deviceUi.entity.deviceId) },
-                            onSendText = { onSendText(deviceUi.entity.deviceId) },
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                        )
-                    }
-
-                    // ── Pending File to Save ───────────────────────────────────
-                    pendingFile?.let { pf ->
-                        item {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            SectionHeader(title = "File Received")
-                        }
-                        item {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    // ── Zone 2: Hero Card ──────────────────────────────────────
+                    if (heroDevice != null) {
+                        item(key = "hero") {
+                            HeroCard(
+                                device = heroDevice,
+                                onPickFile = { onSendFile(heroDevice.entity.deviceId) },
+                                onSendClipboard = { onSendText(heroDevice.entity.deviceId) },
+                                modifier = Modifier.padding(
+                                    horizontal = BeamSpace.s4,
+                                    vertical = BeamSpace.s3,
                                 ),
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text(
-                                        text = "📄 ${pf.fileName}",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    )
-                                    Text(
-                                        text = "${pf.data.size / 1024} KB",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
-                                    )
-                                    Spacer(Modifier.height(12.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { viewModel.savePendingFile() }) {
-                                            Text("Save to Downloads")
-                                        }
-                                        OutlinedButton(onClick = { viewModel.dismissPendingFile() }) {
-                                            Text("Dismiss")
-                                        }
+                            )
+                        }
+                    }
+
+                    // ── Pending file-save prompt ───────────────────────────────
+                    pendingFile?.let { pf ->
+                        item(key = "pending-file") {
+                            PendingFileCard(
+                                fileName = pf.fileName,
+                                sizeBytes = pf.data.size.toLong(),
+                                onSave = { viewModel.savePendingFile() },
+                                onDismiss = { viewModel.dismissPendingFile() },
+                                modifier = Modifier.padding(horizontal = BeamSpace.s4, vertical = BeamSpace.s1),
+                            )
+                        }
+                    }
+
+                    // ── Zone 3: Other Devices ──────────────────────────────────
+                    if (otherDevices.isNotEmpty()) {
+                        item(key = "header-other") {
+                            SectionHeader(title = "OTHER DEVICES")
+                        }
+
+                        items(
+                            items = otherDevices,
+                            key = { it.entity.deviceId },
+                        ) { device ->
+                            DeviceRow(
+                                device = device,
+                                onClick = {
+                                    if (device.isOnline) {
+                                        onSendFile(device.entity.deviceId)
                                     }
-                                }
-                            }
+                                },
+                                onLongClick = { /* retarget hero — future feature */ },
+                            )
                         }
                     }
 
-                    // ── Section: Received Clipboard ────────────────────────────
-                    if (clipboardItems.isNotEmpty()) {
-                        item {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            SectionHeader(title = "Received Clipboard")
-                            Divider(
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant,
-                            )
-                        }
+                    // ── Zone 4: Activity ───────────────────────────────────────
+                    item(key = "header-activity") {
+                        SectionHeader(title = "ACTIVITY")
+                    }
 
+                    if (activityItems.isEmpty()) {
+                        item(key = "empty-activity") {
+                            EmptyActivityMessage()
+                        }
+                    } else {
                         items(
-                            items = clipboardItems,
-                            key = { it.entryId },
-                        ) { entry ->
-                            ReceivedClipboardItem(
-                                content = entry.content,
-                                timestamp = entry.receivedAt,
-                                isUrl = entry.isUrl,
-                                onCopy = { viewModel.copyToClipboard(entry.content) },
-                            )
+                            items = activityItems,
+                            key = { it.id },
+                        ) { item ->
+                            ActivityRow(item = item)
                         }
                     }
-
-                    // ── Section header: Recent Transfers ────────────────────────
-                    if (recentTransfers.isNotEmpty()) {
-                        item {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            SectionHeader(title = "Recent Transfers")
-                            Divider(
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant,
-                            )
-                        }
-
-                        items(
-                            items = recentTransfers,
-                            key = { it.transferId },
-                        ) { transfer ->
-                            TransferHistoryItem(
-                                entity = transfer,
-                                peerName = transfer.deviceId?.let { deviceNameById[it] },
-                            )
-                            Divider(
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant,
-                            )
-                        }
-                    }
-
-                    // Bottom padding so FAB does not occlude the last list item
-                    item { Spacer(modifier = Modifier.height(88.dp)) }
                 }
             }
         }
     }
 }
 
-// ── Device card ────────────────────────────────────────────────────────────────
+// ── Zone 1: Top App Bar ──────────────────────────────────────────────────────
 
 /**
- * Material 3 [Card] representing a single paired device.
+ * Beam top app bar (56dp). Shows the user's own device alias, an online
+ * indicator dot, and a settings gear icon button.
  *
- * Contents:
- *  - Platform icon (laptop, desktop, phone, or tablet).
- *  - Device name (single-line, ellipsized).
- *  - Online/offline status: green dot + "Online" or grey dot + "Offline".
- *  - Connection type label derived from the platform field.
- *  - "Send File" and "Send Text" buttons — only rendered when [device.isOnline] is true.
- *
- * The action buttons are hidden when offline to prevent the user from initiating a
- * transfer that will fail silently. A tooltip or disabled state would be an
- * alternative; hiding is simpler for V1.
- *
- * @param device    The [PairedDeviceUi] to render.
- * @param onSendFile Callback for the "Send File" button.
- * @param onSendText Callback for the "Send Text" button.
- * @param modifier   Layout modifier applied to the root [Card].
+ * @param deviceAlias      The user's own device name displayed as the title.
+ * @param isRelayConnected Whether the relay connection is established.
+ * @param onSettingsClick  Callback when the settings gear is tapped.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DeviceCard(
-    device: PairedDeviceUi,
-    onSendFile: () -> Unit,
-    onSendText: () -> Unit,
-    modifier: Modifier = Modifier,
+private fun BeamTopBar(
+    deviceAlias: String,
+    isRelayConnected: Boolean,
+    onSettingsClick: () -> Unit,
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        shape = MaterialTheme.shapes.medium,
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Platform icon
+    TopAppBar(
+        title = {
+            Text(
+                text = deviceAlias,
+                style = BeamTextStyle.lgSemibold,
+                color = BeamPalette.textHi,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        actions = {
+            // Online status dot — 8dp circle.
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(if (isRelayConnected) BeamPalette.online else BeamPalette.offline),
+            )
+            Spacer(modifier = Modifier.width(BeamSpace.s3))
+
+            // Settings gear.
+            IconButton(onClick = onSettingsClick) {
                 Icon(
-                    imageVector = platformIcon(device.entity),
-                    contentDescription = device.entity.platform,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(32.dp),
+                    imageVector = BeamIcons.settings,
+                    contentDescription = "Settings",
+                    tint = BeamPalette.textHi,
                 )
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    // Device name
-                    Text(
-                        text = device.entity.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    // Connection type label
-                    Text(
-                        text = connectionTypeLabel(device.entity.platform),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // Online / offline status dot + label
-                StatusIndicator(isOnline = device.isOnline)
             }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = BeamPalette.bg0,
+            titleContentColor = BeamPalette.textHi,
+            actionIconContentColor = BeamPalette.textHi,
+        ),
+    )
+}
 
-            // Action buttons — shown only when the device is reachable
-            if (device.isOnline) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onSendFile,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    ) {
-                        Text(text = "Send File")
-                    }
-                    OutlinedButton(
-                        onClick = onSendText,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(text = "Send Text")
-                    }
-                }
+// ── Zone 2: Hero Card ────────────────────────────────────────────────────────
+
+/**
+ * Hero card (128dp) for the top online paired device — the default send target.
+ *
+ * Contains the device alias, online/offline status, and two verb rows:
+ * "Tap to pick file" and "Send clipboard". Verbs are disabled when the
+ * device is offline.
+ *
+ * @param device          The hero [PairedDeviceUi] (first online, or first overall).
+ * @param onPickFile      Callback to open the system file picker for this device.
+ * @param onSendClipboard Callback to send the clipboard to this device.
+ * @param modifier        Layout modifier.
+ */
+@Composable
+private fun HeroCard(
+    device: PairedDeviceUi,
+    onPickFile: () -> Unit,
+    onSendClipboard: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val isOnline = device.isOnline
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                color = BeamPalette.bg1,
+                shape = RoundedCornerShape(BeamCorner.lg),
+            )
+            .border(
+                width = 1.dp,
+                color = BeamPalette.borderSubtle,
+                shape = RoundedCornerShape(BeamCorner.lg),
+            )
+            .padding(BeamSpace.s4),
+    ) {
+        // Device alias.
+        Text(
+            text = device.entity.name,
+            style = BeamTextStyle.xlSemibold,
+            color = BeamPalette.textHi,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+
+        Spacer(modifier = Modifier.height(BeamSpace.s1))
+
+        // Status line: dot + "online" / "offline".
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(if (isOnline) BeamPalette.online else BeamPalette.offline),
+            )
+            Spacer(modifier = Modifier.width(BeamSpace.s1))
+            Text(
+                text = if (isOnline) "online" else "offline",
+                style = BeamTextStyle.smRegular,
+                color = BeamPalette.textMid,
+            )
+        }
+
+        Spacer(modifier = Modifier.height(BeamSpace.s3))
+
+        // Verb divider.
+        HorizontalDivider(color = BeamPalette.borderSubtle, thickness = 1.dp)
+
+        // Verb row 1: "Tap to pick file".
+        HeroVerbRow(
+            label = "Tap to pick file",
+            enabled = isOnline,
+            onClick = onPickFile,
+        )
+
+        // Verb divider.
+        HorizontalDivider(color = BeamPalette.borderSubtle, thickness = 1.dp)
+
+        // Verb row 2: "Send clipboard".
+        HeroVerbRow(
+            label = "Send clipboard",
+            enabled = isOnline,
+            onClick = onSendClipboard,
+        )
+    }
+}
+
+/**
+ * A single 40dp verb row inside the [HeroCard].
+ *
+ * @param label   Display text for the action.
+ * @param enabled Whether the row is interactive (online) or disabled (offline).
+ * @param onClick Callback on tap.
+ */
+@Composable
+private fun HeroVerbRow(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text = label,
+            style = BeamTextStyle.mdMedium,
+            color = if (enabled) BeamPalette.textHi else BeamPalette.textDisabled,
+        )
+    }
+}
+
+// ── Pending file card ────────────────────────────────────────────────────────
+
+/**
+ * Card shown when a file has been received but not yet saved (auto-save OFF).
+ *
+ * @param fileName  Name of the received file.
+ * @param sizeBytes Size in bytes.
+ * @param onSave    Callback for the "Save to Downloads" action.
+ * @param onDismiss Callback for the "Dismiss" action.
+ * @param modifier  Layout modifier.
+ */
+@Composable
+private fun PendingFileCard(
+    fileName: String,
+    sizeBytes: Long,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                color = BeamPalette.bg2,
+                shape = RoundedCornerShape(BeamCorner.lg),
+            )
+            .border(
+                width = 1.dp,
+                color = BeamPalette.borderSubtle,
+                shape = RoundedCornerShape(BeamCorner.lg),
+            )
+            .padding(BeamSpace.s4),
+    ) {
+        Text(
+            text = fileName,
+            style = BeamTextStyle.baseMedium,
+            color = BeamPalette.textHi,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(BeamSpace.s1))
+        Text(
+            text = formatFileSize(sizeBytes),
+            style = BeamTextStyle.smMono,
+            color = BeamPalette.textMid,
+        )
+        Spacer(modifier = Modifier.height(BeamSpace.s3))
+        Row(horizontalArrangement = Arrangement.spacedBy(BeamSpace.s2)) {
+            Button(
+                onClick = onSave,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = BeamPalette.accent,
+                    contentColor = Color.Black,
+                ),
+                shape = RoundedCornerShape(BeamCorner.md),
+            ) {
+                Text("Save to Downloads", style = BeamTextStyle.smMedium)
+            }
+            TextButton(onClick = onDismiss) {
+                Text(
+                    "Dismiss",
+                    style = BeamTextStyle.smMedium,
+                    color = BeamPalette.textMid,
+                )
             }
         }
     }
 }
 
-// ── Status indicator ───────────────────────────────────────────────────────────
+// ── Zone 3: Device rows ──────────────────────────────────────────────────────
 
 /**
- * Small coloured dot + label showing online / offline presence.
+ * A flat 64dp row representing a paired device in the "Other devices" section.
  *
- * @param isOnline True for a green "Online" indicator; false for grey "Offline".
- * @param modifier Layout modifier.
+ * Shows: [status dot] [device icon] [device name] [trailing "send" or "offline"].
+ * Online devices render at full opacity; offline devices at 0.55.
+ *
+ * @param device      The [PairedDeviceUi] to render.
+ * @param onClick     Called on single tap (sends staged content if any).
+ * @param onLongClick Called on long-press (retargets hero card — future feature).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StatusIndicator(
-    isOnline: Boolean,
+private fun DeviceRow(
+    device: PairedDeviceUi,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val rowAlpha = if (device.isOnline) 1f else 0.55f
+
     Row(
-        modifier = modifier,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(BeamRow.height)
+            .alpha(rowAlpha)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
+            .padding(horizontal = BeamRow.paddingHorizontal, vertical = BeamRow.paddingVertical),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Status dot (8dp).
         Box(
             modifier = Modifier
-                .size(8.dp)
+                .size(BeamRow.dotSize)
                 .clip(CircleShape)
-                .background(if (isOnline) OnlineGreen else OfflineGrey),
+                .background(if (device.isOnline) BeamPalette.online else BeamPalette.offline),
         )
-        Spacer(modifier = Modifier.width(4.dp))
+
+        Spacer(modifier = Modifier.width(BeamSpace.s2))
+
+        // Device type icon (24dp).
+        Icon(
+            imageVector = platformIcon(device.entity),
+            contentDescription = device.entity.platform,
+            tint = BeamPalette.textHi,
+            modifier = Modifier.size(24.dp),
+        )
+
+        Spacer(modifier = Modifier.width(BeamSpace.s2))
+
+        // Device name.
         Text(
-            text = if (isOnline) "Online" else "Offline",
-            style = MaterialTheme.typography.labelSmall,
-            color = if (isOnline) OnlineGreen else OfflineGrey,
+            text = device.entity.name,
+            style = BeamTextStyle.baseMedium,
+            color = BeamPalette.textHi,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+
+        Spacer(modifier = Modifier.width(BeamSpace.s2))
+
+        // Trailing label: "send" or "offline".
+        Text(
+            text = if (device.isOnline) "send" else "offline",
+            style = BeamTextStyle.xsMono,
+            color = BeamPalette.textLo,
         )
     }
 }
 
-// ── Section header ─────────────────────────────────────────────────────────────
+// ── Zone 4: Activity ─────────────────────────────────────────────────────────
 
 /**
- * Small bold category label used to separate the devices section from the
- * transfers history section in the [LazyColumn].
+ * Represents a single entry in the unified activity list, merging transfers
+ * and clipboard items into a time-sorted feed.
  *
- * @param title   Display text for the section header.
+ * @property id          Stable unique key for LazyColumn.
+ * @property direction   "SENT" or "RECEIVED" — drives the direction icon.
+ * @property description File name or clipboard content preview.
+ * @property sizeLabel   Human-readable size for files, or null for clipboard items.
+ * @property deviceName  Name of the remote device, or null if unknown.
+ * @property timestamp   Unix epoch millis for relative-time display.
+ */
+data class ActivityItem(
+    val id: String,
+    val direction: String,
+    val description: String,
+    val sizeLabel: String?,
+    val deviceName: String?,
+    val timestamp: Long,
+)
+
+/**
+ * Merges file transfers and clipboard entries into a unified, time-sorted
+ * activity list capped at 8 items.
+ *
+ * @param transfers    Recent file transfer history from Room.
+ * @param clipboard    Recent clipboard entries from Room.
+ * @param deviceNames  Lookup map of deviceId to display name.
+ * @return At most 8 [ActivityItem] entries, newest first.
+ */
+private fun buildActivityList(
+    transfers: List<TransferHistoryEntity>,
+    clipboard: List<ClipboardEntryEntity>,
+    deviceNames: Map<String, String>,
+): List<ActivityItem> {
+    val transferItems = transfers.map { t ->
+        ActivityItem(
+            id = "transfer-${t.transferId}",
+            direction = t.direction,
+            description = t.fileName,
+            sizeLabel = formatFileSize(t.fileSizeBytes),
+            deviceName = t.deviceId?.let { deviceNames[it] },
+            timestamp = t.completedAt ?: t.startedAt,
+        )
+    }
+
+    val clipboardItemsMapped = clipboard.map { c ->
+        ActivityItem(
+            id = "clipboard-${c.entryId}",
+            direction = "RECEIVED",
+            description = c.content.take(40) + if (c.content.length > 40) "\u2026" else "",
+            sizeLabel = null,
+            deviceName = deviceNames[c.deviceId],
+            timestamp = c.receivedAt,
+        )
+    }
+
+    return (transferItems + clipboardItemsMapped)
+        .sortedByDescending { it.timestamp }
+        .take(8)
+}
+
+/**
+ * A single 64dp activity row showing transfer direction, description, size,
+ * device name, and a relative timestamp.
+ *
+ * @param item The unified [ActivityItem] to display.
+ */
+@Composable
+private fun ActivityRow(
+    item: ActivityItem,
+    modifier: Modifier = Modifier,
+) {
+    val isSent = item.direction == "SENT"
+    val relativeTime = remember(item.timestamp) { formatRelativeTime(item.timestamp) }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(BeamRow.height)
+            .padding(horizontal = BeamRow.paddingHorizontal, vertical = BeamRow.paddingVertical),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Direction icon.
+        Icon(
+            imageVector = if (isSent) BeamIcons.transferOut else BeamIcons.transferIn,
+            contentDescription = if (isSent) "Sent" else "Received",
+            tint = BeamPalette.textMid,
+            modifier = Modifier.size(20.dp),
+        )
+
+        Spacer(modifier = Modifier.width(BeamSpace.s2))
+
+        // Filename / clipboard preview.
+        Text(
+            text = item.description,
+            style = BeamTextStyle.baseMedium,
+            color = BeamPalette.textHi,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+
+        // File size (if present).
+        if (item.sizeLabel != null) {
+            Spacer(modifier = Modifier.width(BeamSpace.s2))
+            Text(
+                text = item.sizeLabel,
+                style = BeamTextStyle.smMono,
+                color = BeamPalette.textLo,
+            )
+        }
+
+        // Device name.
+        if (item.deviceName != null) {
+            Spacer(modifier = Modifier.width(BeamSpace.s2))
+            Text(
+                text = item.deviceName,
+                style = BeamTextStyle.smRegular,
+                color = BeamPalette.textLo,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        // Relative timestamp.
+        Spacer(modifier = Modifier.width(BeamSpace.s2))
+        Text(
+            text = relativeTime,
+            style = BeamTextStyle.smMono,
+            color = BeamPalette.textLo,
+        )
+    }
+}
+
+/**
+ * Empty-state message shown when no activity exists.
+ */
+@Composable
+private fun EmptyActivityMessage(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = BeamSpace.s4, vertical = BeamSpace.s6),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "Nothing sent yet. Share into Beam to start.",
+            style = BeamTextStyle.smRegular,
+            color = BeamPalette.textLo,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+// ── Zone 5: Bottom Bar ───────────────────────────────────────────────────────
+
+/**
+ * Fixed bottom bar (56dp) with "Pair" and "Settings" ghost text buttons.
+ * Replaces the old FAB from the utilitarian layout.
+ *
+ * @param onPairClick     Callback when "Pair" is tapped.
+ * @param onSettingsClick Callback when "Settings" is tapped.
+ */
+@Composable
+private fun BeamBottomBar(
+    onPairClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+) {
+    Column {
+        // Top border line.
+        HorizontalDivider(color = BeamPalette.borderSubtle, thickness = 1.dp)
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .background(BeamPalette.bg1),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onPairClick) {
+                Text(
+                    text = "Pair",
+                    style = BeamTextStyle.mdMedium,
+                    color = BeamPalette.textHi,
+                )
+            }
+            TextButton(onClick = onSettingsClick) {
+                Text(
+                    text = "Settings",
+                    style = BeamTextStyle.mdMedium,
+                    color = BeamPalette.textHi,
+                )
+            }
+        }
+    }
+}
+
+// ── Section header ───────────────────────────────────────────────────────────
+
+/**
+ * Section header label used to separate content zones (e.g., "OTHER DEVICES",
+ * "ACTIVITY"). Uses uppercase text with wide letter-spacing per the Beam v1 spec.
+ *
+ * @param title   Display text (should be provided pre-uppercased or will be rendered as-is).
  * @param modifier Layout modifier.
  */
 @Composable
@@ -445,14 +789,76 @@ private fun SectionHeader(
 ) {
     Text(
         text = title,
-        style = MaterialTheme.typography.labelMedium,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        style = BeamTextStyle.smMedium.copy(letterSpacing = 0.6.sp),
+        color = BeamPalette.textMid,
+        modifier = modifier.padding(
+            start = BeamSpace.s4,
+            top = BeamSpace.s3,
+            bottom = BeamSpace.s1,
+        ),
     )
 }
 
-// ── Icon + label helpers ───────────────────────────────────────────────────────
+// ── Empty state (no paired devices) ──────────────────────────────────────────
+
+/**
+ * Full-screen empty state shown when no devices are paired.
+ *
+ * Centered vertically with a heading, subheading, and a "Pair a device"
+ * primary button using BeamPalette.accent.
+ *
+ * @param onPairClick Callback to initiate device pairing.
+ * @param modifier    Layout modifier.
+ */
+@Composable
+private fun EmptyState(
+    onPairClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = BeamSpace.s8),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = "No devices paired.",
+            style = BeamTextStyle.xlSemibold,
+            color = BeamPalette.textHi,
+            textAlign = TextAlign.Center,
+        )
+
+        Spacer(modifier = Modifier.height(BeamSpace.s2))
+
+        Text(
+            text = "Pair one to start sending.",
+            style = BeamTextStyle.baseRegular,
+            color = BeamPalette.textMid,
+            textAlign = TextAlign.Center,
+        )
+
+        Spacer(modifier = Modifier.height(BeamSpace.s8))
+
+        Button(
+            onClick = onPairClick,
+            modifier = Modifier.height(56.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = BeamPalette.accent,
+                contentColor = Color.White,
+            ),
+            shape = RoundedCornerShape(BeamCorner.md),
+        ) {
+            Text(
+                text = "Pair a device",
+                style = BeamTextStyle.mdMedium,
+                color = Color.White,
+            )
+        }
+    }
+}
+
+// ── Icon + label helpers ─────────────────────────────────────────────────────
 
 /**
  * Returns the [ImageVector] that best represents the device's form factor.
@@ -475,79 +881,36 @@ private fun connectionTypeLabel(platform: String): String = when (platform) {
     else -> platform.replaceFirstChar { it.uppercase() }
 }
 
-// ── Received Clipboard item ───────────────────────────────────────────────────
-
-/**
- * A single received clipboard entry displayed in the "Received Clipboard" section.
- *
- * Shows a truncated preview of the content (max 80 chars), a relative timestamp,
- * and a "Copy" button that re-copies the content to the system clipboard.
- *
- * @param content   The full clipboard text received from a paired device.
- * @param timestamp Unix epoch millis when the item was received.
- * @param isUrl     True if the content was classified as a URL by the sender.
- * @param onCopy    Callback invoked when the user taps the "Copy" button.
- */
-@Composable
-fun ReceivedClipboardItem(
-    content: String,
-    timestamp: Long,
-    isUrl: Boolean,
-    onCopy: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        ),
-        shape = MaterialTheme.shapes.small,
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = content.take(80) + if (content.length > 80) "\u2026" else "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = formatRelativeTime(timestamp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(
-                onClick = onCopy,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-            ) {
-                Text("Copy", style = MaterialTheme.typography.labelSmall)
-            }
-        }
-    }
-}
+// ── Formatting helpers ───────────────────────────────────────────────────────
 
 /**
  * Formats a Unix-epoch timestamp as a human-readable relative time string.
  *
  * @param timestamp Unix epoch millis to format.
- * @return A string like "just now", "3 min ago", "2h ago", or "5d ago".
+ * @return A string like "just now", "3m ago", "2h ago", or "5d ago".
  */
 private fun formatRelativeTime(timestamp: Long): String {
-    val diff = System.currentTimeMillis() - timestamp
+    val diff = abs(System.currentTimeMillis() - timestamp)
     return when {
         diff < 60_000L -> "just now"
-        diff < 3_600_000L -> "${diff / 60_000L} min ago"
+        diff < 3_600_000L -> "${diff / 60_000L}m ago"
         diff < 86_400_000L -> "${diff / 3_600_000L}h ago"
         else -> "${diff / 86_400_000L}d ago"
     }
 }
 
+/**
+ * Formats a raw byte count into a compact SI-prefixed string.
+ *
+ * @param bytes Non-negative byte count.
+ * @return Human-readable size string with one decimal place for KB/MB/GB.
+ */
+private fun formatFileSize(bytes: Long): String {
+    val fmt = DecimalFormat("0.#")
+    return when {
+        bytes < 1_024L -> "$bytes B"
+        bytes < 1_048_576L -> "${fmt.format(bytes / 1_024.0)} KB"
+        bytes < 1_073_741_824L -> "${fmt.format(bytes / 1_048_576.0)} MB"
+        else -> "${fmt.format(bytes / 1_073_741_824.0)} GB"
+    }
+}
