@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -305,13 +306,25 @@ private fun BeamTopBar(
 ) {
     TopAppBar(
         title = {
-            Text(
-                text = deviceAlias,
-                style = BeamTextStyle.lgSemibold,
-                color = BeamPalette.textHi,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(BeamSpace.s2),
+            ) {
+                // Beam wordmark — matches the Chrome identity strip.
+                Text(
+                    text = "beam",
+                    style = BeamTextStyle.lgSemibold,
+                    color = BeamPalette.textHi,
+                )
+                // Device alias as secondary text.
+                Text(
+                    text = deviceAlias,
+                    style = BeamTextStyle.smRegular,
+                    color = BeamPalette.textMid,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         },
         actions = {
             // Online status dot — 8dp circle.
@@ -775,7 +788,9 @@ private fun BeamBottomBar(
     onPairClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
-    Column {
+    Column(
+        modifier = Modifier.navigationBarsPadding(),
+    ) {
         // Top border line.
         HorizontalDivider(color = BeamPalette.borderSubtle, thickness = 1.dp)
 
