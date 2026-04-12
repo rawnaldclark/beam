@@ -430,6 +430,29 @@ html, body {
 .hidden { display: none !important; }
 
 /* --------------------------------------------------------------------------
+   Secondary view back row (Phase 3a)
+   -------------------------------------------------------------------------- */
+.view-back {
+  display:     flex;
+  align-items: center;
+  height:      28px;
+  padding:     0 12px;
+  cursor:      pointer;
+  color:       var(--beam-text-mid, var(--text-md));
+  font-size:   var(--beam-size-sm, 12px);
+  gap:         4px;
+  user-select: none;
+  flex-shrink: 0;
+}
+.view-back:hover {
+  color: var(--beam-accent, var(--primary));
+}
+.view-back svg {
+  width:  14px;
+  height: 14px;
+}
+
+/* --------------------------------------------------------------------------
    Shared: view-body (centered card-like inner wrapper for overlay views)
    -------------------------------------------------------------------------- */
 .view-body {
@@ -441,15 +464,17 @@ html, body {
 }
 
 .view-title {
-  font-size:   16px;
-  font-weight: 600;
-  color:       var(--text-hi);
-  text-align:  center;
+  font-size:      var(--beam-size-lg, 16px);
+  font-weight:    600;
+  color:          var(--beam-text-hi, var(--text-hi));
+  text-align:     center;
+  padding:        16px 12px 8px;
+  letter-spacing: -0.01em;
 }
 
 .view-desc {
-  font-size:  13px;
-  color:      var(--text-md);
+  font-size:  var(--beam-size-base, 13px);
+  color:      var(--beam-text-mid, var(--text-md));
   text-align: center;
 }
 
@@ -457,23 +482,21 @@ html, body {
    Pairing view — QR code
    -------------------------------------------------------------------------- */
 .qr-container {
-  position:      relative;
-  width:         196px;
-  height:        196px;
-  background:    #fff;
-  border-radius: var(--radius-md);
-  overflow:      hidden;
-  display:       flex;
-  align-items:   center;
+  position:        relative;
+  width:           200px;
+  margin:          12px auto;
+  padding:         12px;
+  background:      #fff;
+  border-radius:   var(--beam-radius-lg, 8px);
+  display:         flex;
+  align-items:     center;
   justify-content: center;
-  /* White background needed so QR is scannable */
-  padding:       6px;
-  box-shadow:    0 4px 16px rgba(0,0,0,0.4);
+  overflow:        hidden;
 }
 
 .qr-container svg {
-  width:  184px;
-  height: 184px;
+  width:   176px;
+  height:  176px;
   display: block;
 }
 
@@ -501,26 +524,28 @@ html, body {
 }
 
 .subtitle {
-  font-size:  13px;
-  color:      var(--text-md);
+  font-size:  var(--beam-size-sm, 12px);
+  color:      var(--beam-text-mid, var(--text-md));
   text-align: center;
 }
 
-/* PIN display row */
+/* PIN display row (Phase 3a) */
 .pin-display {
-  display:     flex;
-  align-items: center;
-  gap:         8px;
-  background:  var(--surface);
-  border:      1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding:     8px 12px;
-  width:       100%;
+  display:       flex;
+  align-items:   center;
+  justify-content: center;
+  gap:           12px;
+  margin:        12px auto;
+  padding:       8px 16px;
+  background:    var(--beam-bg-1, var(--surface));
+  border:        1px solid var(--beam-border-subtle, var(--border));
+  border-radius: var(--beam-radius-md, 6px);
+  max-width:     280px;
 }
 
 .pin-label {
-  font-size: 12px;
-  color:     var(--text-lo);
+  font-size:   var(--beam-size-xs, 11px);
+  color:       var(--beam-text-lo, var(--text-lo));
   flex-shrink: 0;
 }
 
@@ -536,36 +561,60 @@ html, body {
 }
 
 .pin-timer {
-  font-size:  12px;
-  color:      var(--warn);
+  font-family: var(--beam-font-mono);
+  font-size:   var(--beam-size-xs, 11px);
+  color:       var(--beam-warning, var(--warn));
   flex-shrink: 0;
-  min-width:  28px;
-  text-align: right;
+  min-width:   28px;
+  text-align:  right;
 }
 
 /* --------------------------------------------------------------------------
    SAS view
    -------------------------------------------------------------------------- */
-.sas-display {
+/* SAS emoji grid (Phase 3a — 2x2 layout) */
+.sas-grid {
+  display:               grid;
+  grid-template-columns: 1fr 1fr;
+  gap:                   12px;
+  max-width:             200px;
+  margin:                16px auto;
+}
+
+.sas-cell {
   display:         flex;
+  align-items:     center;
   justify-content: center;
-  gap:             12px;
-  flex-wrap:       wrap;
+  width:           80px;
+  height:          80px;
+  background:      var(--beam-bg-1, var(--surface));
+  border:          1px solid var(--beam-border-subtle, var(--border));
+  border-radius:   var(--beam-radius-lg, 8px);
+  font-size:       32px;
+}
+
+/* Legacy class kept for any external references */
+.sas-display {
+  display:               grid;
+  grid-template-columns: 1fr 1fr;
+  gap:                   12px;
+  max-width:             200px;
+  margin:                16px auto;
 }
 
 .sas-emoji {
   display:         flex;
   align-items:     center;
   justify-content: center;
-  width:           56px;
-  height:          56px;
-  background:      var(--surface);
-  border:          1px solid var(--border);
-  border-radius:   var(--radius-md);
+  width:           80px;
+  height:          80px;
+  background:      var(--beam-bg-1, var(--surface));
+  border:          1px solid var(--beam-border-subtle, var(--border));
+  border-radius:   var(--beam-radius-lg, 8px);
 }
 
 .sas-emoji .emoji {
-  font-size: 28px;
+  font-size:   32px;
   line-height: 1;
 }
 
@@ -1081,6 +1130,26 @@ html, body {
   border-color: var(--text-md);
 }
 
+.btn.ghost {
+  background:   transparent;
+  color:        var(--beam-text-mid, var(--text-md));
+  border-color: transparent;
+}
+
+.btn.ghost:hover {
+  background: var(--beam-bg-2, var(--surface-2));
+  color:      var(--beam-text-hi, var(--text-hi));
+}
+
+.btn.ghost.danger-text {
+  color: var(--beam-danger, var(--danger));
+}
+
+.btn.ghost.danger-text:hover {
+  background: var(--beam-danger-12, var(--danger-dim));
+  color:      var(--beam-danger, var(--danger));
+}
+
 .btn.full-width { width: 100%; justify-content: center; }
 
 /* Button group (side by side, equal width) */
@@ -1092,124 +1161,168 @@ html, body {
 }
 
 /* --------------------------------------------------------------------------
-   Settings view
+   Settings view (Phase 3a — grouped sections with toggle switches)
    -------------------------------------------------------------------------- */
-.settings-header {
-  display:       flex;
-  align-items:   center;
-  gap:           8px;
-  padding:       12px 16px;
-  border-bottom: 1px solid var(--border);
-  background:    var(--surface);
+.settings-section-header {
+  font-size:       var(--beam-size-sm, 12px);
+  font-weight:     500;
+  color:           var(--beam-text-mid, var(--text-md));
+  text-transform:  uppercase;
+  letter-spacing:  0.05em;
+  padding:         16px 12px 4px;
 }
 
-.settings-header h3 {
-  font-size:   15px;
-  font-weight: 600;
-  color:       var(--text-hi);
+.settings-row {
+  display:     flex;
+  align-items: center;
+  min-height:  40px;
+  padding:     6px 12px;
+  gap:         8px;
 }
 
-.settings-section {
-  padding: 12px 16px;
+.settings-row-label {
+  flex: 1;
 }
 
-.settings-section h4 {
-  color:          var(--text-md);
-  font-size:      11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-bottom:  8px;
-  font-weight:    600;
+.settings-row-label .label-text {
+  font-size: var(--beam-size-base, 13px);
+  color:     var(--beam-text-hi, var(--text-hi));
 }
 
-.setting-row {
+.settings-row-label .label-desc {
+  font-size:  var(--beam-size-xs, 11px);
+  color:      var(--beam-text-lo, var(--text-lo));
+  margin-top: 2px;
+}
+
+.settings-about-text {
+  font-size: var(--beam-size-xs, 11px) !important;
+  color:     var(--beam-text-lo, var(--text-lo)) !important;
+}
+
+/* Device name display + edit */
+.settings-device-name-display {
+  font-size: var(--beam-size-base, 13px);
+  color:     var(--beam-text-hi, var(--text-hi));
+}
+
+.settings-edit-btn {
   display:         flex;
-  justify-content: space-between;
   align-items:     center;
-  padding:         10px 0;
-  border-bottom:   1px solid var(--border);
+  justify-content: center;
+  width:           24px;
+  height:          24px;
+  border:          none;
+  border-radius:   var(--beam-radius-md, var(--radius-sm));
+  background:      transparent;
+  color:           var(--beam-text-mid, var(--text-md));
   cursor:          pointer;
+  transition:      color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
+  flex-shrink:     0;
 }
 
-.setting-row:last-child {
-  border-bottom: none;
+.settings-edit-btn:hover {
+  color: var(--beam-accent, var(--primary));
 }
 
-.setting-row span {
-  font-size: 13px;
-  color:     var(--text-hi);
-}
-
-.setting-row input[type="checkbox"] {
-  width:        18px;
-  height:       18px;
-  accent-color: var(--primary);
-  cursor:       pointer;
-  flex-shrink:  0;
-}
-
-.setting-row input[type="text"] {
-  background:    var(--surface);
-  border:        1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding:       4px 8px;
-  color:         var(--text-hi);
-  width:         120px;
-  text-align:    right;
-  font-size:     13px;
+.settings-inline-input {
+  flex:          1;
+  background:    var(--beam-bg-1, var(--surface));
+  border:        1px solid var(--beam-border-subtle, var(--border));
+  border-radius: var(--beam-radius-md, var(--radius-sm));
+  padding:       6px 10px;
+  color:         var(--beam-text-hi, var(--text-hi));
+  font-size:     var(--beam-size-base, 13px);
   outline:       none;
   transition:    border-color var(--transition);
 }
 
-.setting-row input[type="text"]:focus {
-  border-color: var(--primary);
+.settings-inline-input:focus {
+  border-color: var(--beam-accent, var(--primary));
 }
 
-/* Paired devices list inside settings */
-.setting-device-row {
+/* ── Toggle switch (accent) ── */
+.beam-toggle {
+  position:    relative;
+  width:       36px;
+  height:      20px;
+  background:  var(--beam-border-subtle, var(--border));
+  border-radius: 999px;
+  cursor:      pointer;
+  transition:  background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
+  flex-shrink: 0;
+}
+.beam-toggle.on {
+  background: var(--beam-accent, var(--primary));
+}
+.beam-toggle::after {
+  content:       '';
+  position:      absolute;
+  top:           2px;
+  left:          2px;
+  width:         16px;
+  height:        16px;
+  border-radius: 50%;
+  background:    #fff;
+  transition:    transform var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
+}
+.beam-toggle.on::after {
+  transform: translateX(16px);
+}
+
+/* Paired devices list inside settings (Phase 3a) */
+.settings-device-row {
   display:     flex;
   align-items: center;
+  height:      36px;
+  padding:     0 12px;
   gap:         8px;
-  padding:     8px 0;
-  border-bottom: 1px solid var(--border);
 }
 
-.setting-device-row:last-child {
-  border-bottom: none;
-}
-
-.setting-device-icon {
-  font-size:   18px;
+.settings-device-icon {
+  display:     flex;
+  align-items: center;
   flex-shrink: 0;
-  width:       24px;
-  text-align:  center;
+  color:       var(--beam-text-mid, var(--text-md));
+  line-height: 1;
 }
 
-.setting-device-name {
-  flex:        1;
-  font-size:   13px;
-  color:       var(--text-hi);
-  white-space: nowrap;
-  overflow:    hidden;
+.settings-device-icon svg {
+  width:  16px;
+  height: 16px;
+}
+
+.settings-device-name {
+  flex:          1;
+  font-size:     var(--beam-size-base, 13px);
+  color:         var(--beam-text-hi, var(--text-hi));
+  white-space:   nowrap;
+  overflow:      hidden;
   text-overflow: ellipsis;
 }
 
 .unpair-btn {
-  padding:       4px 10px;
-  border-radius: var(--radius-sm);
-  border:        1px solid var(--danger);
-  background:    var(--danger-dim);
-  color:         var(--danger);
-  font-size:     11px;
+  padding:       3px 10px;
+  border-radius: var(--beam-radius-md, var(--radius-sm));
+  border:        none;
+  background:    transparent;
+  color:         var(--beam-danger, var(--danger));
+  font-size:     var(--beam-size-xs, 11px);
   font-weight:   600;
   cursor:        pointer;
   flex-shrink:   0;
-  transition:    background var(--transition);
+  transition:    background var(--transition), color var(--transition);
 }
 
 .unpair-btn:hover {
-  background: var(--danger);
-  color:      #fff;
+  background: var(--beam-danger-12, var(--danger-dim));
+  color:      var(--beam-danger, var(--danger));
+}
+
+.empty-list-msg {
+  font-size:  var(--beam-size-sm, 12px);
+  color:      var(--beam-text-lo, var(--text-lo));
+  padding:    8px 12px;
 }
 
 /* --------------------------------------------------------------------------

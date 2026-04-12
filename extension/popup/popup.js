@@ -743,6 +743,25 @@ function showView(name) {
   const ids = ['view-main', 'view-pairing', 'view-sas', 'view-naming', 'view-settings'];
   ids.forEach(id => document.getElementById(id)?.classList.add('hidden'));
   document.getElementById(`view-${name}`)?.classList.remove('hidden');
+
+  // Phase 3a: manage the shortcut footer based on active view.
+  // Secondary views show a minimal "esc back" footer; main shows the full footer.
+  const footer = document.getElementById('shortcut-footer');
+  if (!footer) return;
+
+  if (name === 'main') {
+    footer.classList.remove('hidden');
+    footer.innerHTML = `
+      <span class="shortcut-chip">&#x23CE; send</span>
+      <span class="shortcut-chip">&#x2191;&#x2193; select</span>
+      <span class="shortcut-chip">/ filter</span>
+      <span class="shortcut-chip">p pair</span>
+      <span class="shortcut-chip">, settings</span>
+    `;
+  } else {
+    footer.classList.remove('hidden');
+    footer.innerHTML = '<span class="shortcut-chip">esc back</span>';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -944,17 +963,86 @@ function setupEventListeners() {
   // Header: Settings — open settings view
   document.getElementById('btn-settings')?.addEventListener('click', showSettingsView);
 
-  // Settings view: Back button
+  // Phase 3a: Back rows for all secondary views (using view-back pattern)
   document.getElementById('settings-back')?.addEventListener('click', () => {
     showView('main');
   });
+  document.getElementById('pairing-back')?.addEventListener('click', () => {
+    if (pinTimerHandle) { clearInterval(pinTimerHandle); pinTimerHandle = null; }
+    cancelPairingRelay();
+    pendingPairing = null;
+    pairingDeviceId = null;
+    showView('main');
+  });
+  document.getElementById('sas-back')?.addEventListener('click', cancelSAS);
+  document.getElementById('naming-back')?.addEventListener('click', () => {
+    showView('main');
+  });
 
-  // Settings view: auto-save checkboxes on change
-  document.getElementById('setting-auto-copy')?.addEventListener('change', saveSettings);
-  document.getElementById('setting-auto-save')?.addEventListener('change', saveSettings);
+  // Phase 3a: Settings toggle switches
+  document.getElementById('toggle-auto-copy')?.addEventListener('click', () => {
+    const tog = document.getElementById('toggle-auto-copy');
+    if (!tog) return;
+    tog.classList.toggle('on');
+    tog.setAttribute('aria-checked', tog.classList.contains('on') ? 'true' : 'false');
+    saveSettings();
+  });
+  document.getElementById('toggle-auto-save')?.addEventListener('click', () => {
+    const tog = document.getElementById('toggle-auto-save');
+    if (!tog) return;
+    tog.classList.toggle('on');
+    tog.setAttribute('aria-checked', tog.classList.contains('on') ? 'true' : 'false');
+    saveSettings();
+  });
 
-  // Settings view: device name on blur
-  document.getElementById('setting-device-name')?.addEventListener('blur', saveSettings);
+  // Phase 3a: Toggle keyboard accessibility (Enter/Space)
+  document.querySelectorAll('.beam-toggle').forEach(tog => {
+    tog.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        tog.click();
+      }
+    });
+  });
+
+  // Phase 3a: Device name inline edit
+  document.getElementById('settings-edit-name')?.addEventListener('click', () => {
+    const displayRow = document.getElementById('settings-device-name-row');
+    const editRow    = document.getElementById('settings-device-name-edit-row');
+    const input      = document.getElementById('setting-device-name');
+    if (!displayRow || !editRow || !input) return;
+
+    // Copy current display value into the input
+    const displayEl = document.getElementById('settings-device-name-display');
+    if (displayEl) input.value = displayEl.textContent;
+
+    displayRow.classList.add('hidden');
+    editRow.classList.remove('hidden');
+    input.focus();
+    input.select();
+  });
+
+  // Device name: save on blur or Enter
+  const nameInput = document.getElementById('setting-device-name');
+  if (nameInput) {
+    nameInput.addEventListener('blur', () => {
+      commitDeviceNameEdit();
+    });
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        nameInput.blur();
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        // Revert and close
+        const displayRow = document.getElementById('settings-device-name-row');
+        const editRow    = document.getElementById('settings-device-name-edit-row');
+        if (displayRow) displayRow.classList.remove('hidden');
+        if (editRow) editRow.classList.add('hidden');
+      }
+    });
+  }
 
   // Pairing view: Cancel — disconnect relay and return to main.
   document.getElementById('btn-pairing-cancel')?.addEventListener('click', () => {
@@ -1610,14 +1698,28 @@ async function showSettingsView() {
   const settings = stored.settings ?? { autoCopy: true, autoSave: false, deviceName: 'Chrome' };
   const devices = stored.pairedDevices ?? [];
 
-  // Populate form controls
-  const autoCopyEl = document.getElementById('setting-auto-copy');
-  const autoSaveEl = document.getElementById('setting-auto-save');
-  const nameEl = document.getElementById('setting-device-name');
+  // Phase 3a: populate toggle switches instead of checkboxes
+  const autoCopyToggle = document.getElementById('toggle-auto-copy');
+  const autoSaveToggle = document.getElementById('toggle-auto-save');
+  const nameDisplay    = document.getElementById('settings-device-name-display');
+  const nameInput      = document.getElementById('setting-device-name');
 
-  if (autoCopyEl) autoCopyEl.checked = settings.autoCopy !== false;
-  if (autoSaveEl) autoSaveEl.checked = !!settings.autoSave;
-  if (nameEl) nameEl.value = settings.deviceName || 'Chrome';
+  if (autoCopyToggle) {
+    autoCopyToggle.classList.toggle('on', settings.autoCopy !== false);
+    autoCopyToggle.setAttribute('aria-checked', settings.autoCopy !== false ? 'true' : 'false');
+  }
+  if (autoSaveToggle) {
+    autoSaveToggle.classList.toggle('on', !!settings.autoSave);
+    autoSaveToggle.setAttribute('aria-checked', settings.autoSave ? 'true' : 'false');
+  }
+  if (nameDisplay) nameDisplay.textContent = settings.deviceName || 'Chrome';
+  if (nameInput)   nameInput.value = settings.deviceName || 'Chrome';
+
+  // Reset to display mode (hide inline edit if open)
+  const displayRow = document.getElementById('settings-device-name-row');
+  const editRow    = document.getElementById('settings-device-name-edit-row');
+  if (displayRow) displayRow.classList.remove('hidden');
+  if (editRow)    editRow.classList.add('hidden');
 
   // Render paired devices list
   renderSettingsPairedDevices(devices);
@@ -1634,13 +1736,40 @@ async function showSettingsView() {
  * @returns {Promise<void>}
  */
 async function saveSettings() {
-  const autoCopy = document.getElementById('setting-auto-copy')?.checked ?? true;
-  const autoSave = document.getElementById('setting-auto-save')?.checked ?? false;
-  const deviceName = (document.getElementById('setting-device-name')?.value || 'Chrome').trim().slice(0, 30) || 'Chrome';
+  // Phase 3a: read from toggle switches instead of checkboxes
+  const autoCopy   = document.getElementById('toggle-auto-copy')?.classList.contains('on') ?? true;
+  const autoSave   = document.getElementById('toggle-auto-save')?.classList.contains('on') ?? false;
+  const deviceName = (document.getElementById('settings-device-name-display')?.textContent || 'Chrome').trim().slice(0, 30) || 'Chrome';
 
   await chrome.storage.local.set({
     settings: { autoCopy, autoSave, deviceName },
   });
+}
+
+/**
+ * Commit the inline device name edit: update display, save settings, and
+ * switch back to display mode.
+ */
+function commitDeviceNameEdit() {
+  const input      = document.getElementById('setting-device-name');
+  const displayEl  = document.getElementById('settings-device-name-display');
+  const displayRow = document.getElementById('settings-device-name-row');
+  const editRow    = document.getElementById('settings-device-name-edit-row');
+  if (!input) return;
+
+  const newName = (input.value || 'Chrome').trim().slice(0, 30) || 'Chrome';
+  if (displayEl) displayEl.textContent = newName;
+
+  // Switch back to display mode
+  if (displayRow) displayRow.classList.remove('hidden');
+  if (editRow)    editRow.classList.add('hidden');
+
+  // Persist
+  saveSettings();
+
+  // Update the identity strip alias
+  const aliasEl = document.getElementById('identity-alias');
+  if (aliasEl) aliasEl.textContent = newName;
 }
 
 /**
@@ -1660,9 +1789,9 @@ function renderSettingsPairedDevices(devices) {
   container.innerHTML = devices.map(d => {
     const icon = ICON_MAP[d.icon] ?? beamIcon.laptop();
     return `
-      <div class="setting-device-row" data-id="${escapeAttr(d.deviceId)}">
-        <span class="setting-device-icon">${icon}</span>
-        <span class="setting-device-name">${escapeHtml(d.name)}</span>
+      <div class="settings-device-row" data-id="${escapeAttr(d.deviceId)}">
+        <span class="settings-device-icon">${icon}</span>
+        <span class="settings-device-name">${escapeHtml(d.name)}</span>
         <button class="unpair-btn" data-id="${escapeAttr(d.deviceId)}"
                 aria-label="Unpair ${escapeAttr(d.name)}">Unpair</button>
       </div>
