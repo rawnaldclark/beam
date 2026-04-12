@@ -1264,3 +1264,210 @@ html, body {
   0%   { background: var(--beam-accent-12, var(--primary-dim)); }
   100% { background: transparent; }
 }
+
+/* --------------------------------------------------------------------------
+   Phase 2c — Inline transfer state visualisations
+   -------------------------------------------------------------------------- */
+
+/* Ring progress SVG container (replaces the status dot during transfers) */
+.device-row .row-ring {
+  display:     flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.device-row .row-ring .ring-progress {
+  display: block;
+}
+
+/* Transferring row: slightly different background to indicate activity */
+.device-row.transferring {
+  opacity: 1;
+  cursor:  default;
+}
+
+.device-row.transferring:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Transfer metadata in the trailing area */
+.row-trailing-xfer {
+  display:     flex;
+  align-items: center;
+  gap:         6px;
+}
+
+.xfer-filename {
+  font-size:   var(--beam-size-xs, 11px);
+  color:       var(--beam-text-hi, var(--text-hi));
+  font-weight: 500;
+  white-space: nowrap;
+  overflow:    hidden;
+  text-overflow: ellipsis;
+  max-width:   100px;
+}
+
+.xfer-bytes {
+  font-size:   var(--beam-size-xs, 11px);
+  color:       var(--beam-text-lo, var(--text-lo));
+  font-family: var(--beam-font-mono);
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   Phase 2c — Success state (check-circle + green flash)
+   -------------------------------------------------------------------------- */
+.device-row.transfer-success {
+  background:  var(--beam-success-dim, var(--success-dim));
+  transition:  background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
+  cursor:      default;
+}
+
+.device-row.transfer-success:hover {
+  background: var(--beam-success-dim, var(--success-dim));
+}
+
+.device-row .row-state-icon {
+  display:     flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.device-row .state-icon.success-icon {
+  color: var(--beam-success, var(--success));
+  width:  16px;
+  height: 16px;
+  animation: state-icon-in var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease) both;
+}
+
+.row-trailing-done {
+  display:     flex;
+  align-items: center;
+  gap:         4px;
+}
+
+.row-trailing-done .xfer-verb {
+  font-size:   var(--beam-size-xs, 11px);
+  color:       var(--beam-text-hi, var(--text-hi));
+  font-weight: 500;
+}
+
+.row-trailing-done .xfer-filename {
+  color: var(--beam-text-mid, var(--text-md));
+}
+
+.row-trailing-done .xfer-bytes {
+  font-size:   var(--beam-size-xs, 11px);
+  color:       var(--beam-text-lo, var(--text-lo));
+  font-family: var(--beam-font-mono);
+}
+
+@keyframes state-icon-in {
+  0%   { opacity: 0; transform: scale(0.6); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* --------------------------------------------------------------------------
+   Phase 2c — Failed state (x-circle + red background + retry chip)
+   -------------------------------------------------------------------------- */
+.device-row.transfer-failed {
+  background: var(--beam-danger-dim, var(--danger-dim));
+  cursor:     default;
+}
+
+.device-row.transfer-failed:hover {
+  background: var(--beam-danger-dim, var(--danger-dim));
+}
+
+.device-row .state-icon.danger-icon {
+  color:  var(--beam-danger, var(--danger));
+  width:  16px;
+  height: 16px;
+  animation: state-icon-in var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease) both;
+}
+
+.row-trailing-error {
+  display:     flex;
+  align-items: center;
+  gap:         4px;
+  overflow:    hidden;
+}
+
+.xfer-error-msg {
+  font-size:     var(--beam-size-base, 13px);
+  color:         var(--beam-text-hi, var(--text-hi));
+  white-space:   nowrap;
+  overflow:      hidden;
+  text-overflow: ellipsis;
+  max-width:     120px;
+}
+
+.retry-chip {
+  font-family: var(--beam-font-mono);
+  font-size:   11px;
+  color:       var(--beam-text-hi, var(--text-hi));
+  background:  transparent;
+  border:      1px solid var(--beam-border-strong, var(--border));
+  border-radius: 999px;
+  padding:     2px 8px;
+  cursor:      pointer;
+  transition:  background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
+  margin-left: 8px;
+  flex-shrink: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.retry-chip:hover {
+  background: var(--beam-danger-dim, var(--danger-dim));
+}
+
+/* --------------------------------------------------------------------------
+   Phase 2c — Surface-wide relay error banner
+   -------------------------------------------------------------------------- */
+.error-banner {
+  display:       flex;
+  align-items:   center;
+  gap:           8px;
+  padding:       6px 12px;
+  background:    var(--beam-bg-1, var(--surface));
+  border-bottom: 1px solid var(--beam-border-subtle, var(--border));
+  font-size:     13px;
+  color:         var(--beam-text-hi, var(--text-hi));
+  animation:     banner-slide-in 180ms var(--beam-ease-out, ease) both;
+}
+
+@keyframes banner-slide-in {
+  0%   { opacity: 0; transform: translateY(-100%); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.error-banner .error-icon {
+  color:       var(--beam-danger, var(--danger));
+  flex-shrink: 0;
+  display:     flex;
+  align-items: center;
+}
+
+.error-banner .error-icon svg {
+  width:  16px;
+  height: 16px;
+}
+
+.error-banner .error-message {
+  flex:      1;
+  font-size: 13px;
+}
+
+/* Dim device rows when relay is disconnected */
+#main-list.relay-error .device-row {
+  opacity:        0.35;
+  pointer-events: none;
+}
+
+/* Activity rows dim but stay clickable */
+#main-list.relay-error .activity-row {
+  opacity: 0.55;
+}

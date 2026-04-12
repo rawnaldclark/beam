@@ -73,6 +73,51 @@ let selectedDeviceId = null;
  */
 const activeTransfers = new Map();
 
+// ---------------------------------------------------------------------------
+// Phase 2c — Inline transfer state tracking
+// ---------------------------------------------------------------------------
+
+/**
+ * Active transfers indexed by deviceId for inline device-row visualisation.
+ * Each entry holds the transfer metadata needed to render the ring-progress
+ * indicator, success hold, or failure state directly inside the device row.
+ *
+ * @type {Map<string, {
+ *   percent: number,
+ *   fileName: string,
+ *   bytesTransferred: number,
+ *   bytesTotal: number,
+ *   direction: 'out'|'in',
+ *   transferId: string,
+ *   state: 'progress'|'success'|'failed',
+ *   error?: string,
+ *   targetDeviceId: string,
+ *   sendPayload?: object
+ * }>}
+ */
+const activeTransfersByDevice = new Map();
+
+/** Circumference of the ring-progress circle (r=6). */
+const RING_CIRCUMFERENCE = 2 * Math.PI * 6; // 37.699
+
+/** Duration (ms) the success state holds before fading back to idle. */
+const SUCCESS_HOLD_MS = 600;
+
+/** Duration (ms) for the crossfade from ring to check icon. */
+const CROSSFADE_MS = 120;
+
+/** Duration (ms) for the fade-back to idle after success hold. */
+const FADE_BACK_MS = 180;
+
+/** Timeout handles for success-hold per deviceId, so we can cancel on re-send. */
+const successTimers = new Map();
+
+/** Whether the relay-error banner is currently visible. */
+let relayErrorActive = false;
+
+/** Interval handle for the relay-error countdown. */
+let relayCountdownHandle = null;
+
 /**
  * Cached transfer history for the unified activity list (Phase 2a).
  * @type {Array<{transferId: string, fileName: string, fileSize: number, direction: string, status: string, timestamp: number, targetDeviceName?: string}>}
@@ -216,6 +261,23 @@ async function loadDevices() {
     isOnline: presence[d.deviceId]?.isOnline === true,
   }));
 
+  // Phase 2c: if we have paired devices but presence is empty (relay WS closed),
+  // show the error banner. Empty presence + paired devices = relay unreachable.
+  if (currentDevices.length > 0 && Object.keys(presence).length === 0) {
+    const hasAnyOnline = currentDevices.some(d => d.isOnline);
+    if (!hasAnyOnline) {
+      // Check if this is a genuine relay disconnect (not just startup timing).
+      // We use a short delay so the relay has time to populate presence on
+      // initial popup open. The banner only shows if still empty after 1.5s.
+      setTimeout(() => {
+        const anyOnline = currentDevices.some(d => d.isOnline);
+        if (!anyOnline && currentDevices.length > 0) {
+          showRelayErrorBanner();
+        }
+      }, 1500);
+    }
+  }
+
   renderDevices();
 }
 
@@ -307,17 +369,39 @@ function renderDevices() {
 
 /**
  * Build the inner HTML for a single device row (Phase 2a flat 36px row).
+ * Phase 2c: if an active transfer exists for this device, the row morphs to
+ * show inline ring-progress, success, or failure state.
+ *
  * All user-provided text is escaped.
  *
  * @param {{deviceId: string, name: string, icon: string, isOnline: boolean}} d
  * @returns {string}
  */
 function deviceRowHTML(d) {
-  const statusClass  = d.isOnline ? 'online' : 'offline';
-  const dotClass     = d.isOnline ? 'dot-online' : 'dot-offline';
-  const icon         = ICON_MAP[d.icon] ?? beamIcon.laptop();
-  const trailing     = d.isOnline ? 'send' : 'offline';
+  const statusClass   = d.isOnline ? 'online' : 'offline';
   const selectedClass = d.deviceId === selectedDeviceId ? 'selected' : '';
+  const icon          = ICON_MAP[d.icon] ?? beamIcon.laptop();
+
+  // Phase 2c: check for active transfer state on this device.
+  const xfer = activeTransfersByDevice.get(d.deviceId);
+
+  if (xfer && xfer.state === 'progress') {
+    return deviceRowTransferHTML(d, xfer, statusClass, selectedClass, icon);
+  }
+
+  if (xfer && xfer.state === 'success') {
+    return deviceRowSuccessHTML(d, xfer, statusClass, selectedClass);
+  }
+
+  if (xfer && xfer.state === 'failed') {
+    return deviceRowFailedHTML(d, xfer, statusClass, selectedClass, icon);
+  }
+
+  // Default idle state.
+  const dotClass = d.isOnline ? 'dot-online' : 'dot-offline';
+  const trailing = relayErrorActive ? 'unavailable'
+                 : d.isOnline       ? 'send'
+                 :                    'offline';
 
   return `
     <div class="device-row ${statusClass} ${selectedClass}" data-id="${escapeAttr(d.deviceId)}"
@@ -331,34 +415,159 @@ function deviceRowHTML(d) {
 }
 
 /**
- * Re-render the active transfer progress bars.
- * Called whenever activeTransfers map changes.
+ * Build a device row in the "transferring" state with an inline ring-progress SVG.
+ *
+ * @param {object} d  - Device object
+ * @param {object} xfer - Transfer state from activeTransfersByDevice
+ * @param {string} statusClass
+ * @param {string} selectedClass
+ * @param {string} icon - Device icon SVG
+ * @returns {string}
  */
-function renderActiveTransfers() {
-  const section = el('active-transfers');
-  if (activeTransfers.size === 0) {
-    section.innerHTML = '';
-    return;
+function deviceRowTransferHTML(d, xfer, statusClass, selectedClass, icon) {
+  const pct    = Math.min(100, Math.max(0, xfer.percent));
+  const offset = RING_CIRCUMFERENCE * (1 - pct / 100);
+
+  const ring = `
+    <svg class="ring-progress" width="16" height="16" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="6" fill="none" stroke="var(--beam-border-subtle, var(--border))" stroke-width="1.5"/>
+      <circle cx="8" cy="8" r="6" fill="none" stroke="var(--beam-accent, var(--primary))" stroke-width="1.5"
+              stroke-dasharray="${RING_CIRCUMFERENCE.toFixed(3)}" stroke-dashoffset="${offset.toFixed(3)}"
+              stroke-linecap="round" transform="rotate(-90 8 8)"/>
+    </svg>`;
+
+  // Trailing: filename + bytes progress for outgoing, filename + "in" for incoming.
+  let trailingContent;
+  if (xfer.direction === 'in') {
+    trailingContent = `
+      <span class="xfer-filename">${escapeHtml(truncateFilename(xfer.fileName, 18))}</span>
+      <span class="xfer-bytes">in</span>`;
+  } else {
+    const transferred = formatBytes(xfer.bytesTransferred);
+    const total       = formatBytes(xfer.bytesTotal);
+    trailingContent = `
+      <span class="xfer-filename">${escapeHtml(truncateFilename(xfer.fileName, 18))}</span>
+      <span class="xfer-bytes">${transferred}/${total}</span>`;
   }
 
-  const items = [...activeTransfers.values()].slice(0, MAX_ACTIVE_SHOWN);
-  section.innerHTML = items.map(t => {
-    const pct  = t.totalBytes > 0
-      ? Math.round((t.bytesTransferred / t.totalBytes) * 100)
-      : 0;
-    const speed = t.speedBps ? ` — ${formatBytes(t.speedBps)}/s` : '';
-    return `
-      <div class="transfer-card" data-transfer="${escapeAttr(t.transferId)}">
-        <div class="transfer-card-header">
-          <span class="transfer-filename">${escapeHtml(t.fileName)}</span>
-          <span class="transfer-meta">${pct}%${speed}</span>
-        </div>
-        <div class="progress-bar-wrap">
-          <div class="progress-bar" style="width:${pct}%"></div>
-        </div>
-      </div>
-    `;
-  }).join('');
+  return `
+    <div class="device-row transferring ${statusClass} ${selectedClass}" data-id="${escapeAttr(d.deviceId)}"
+         role="button" tabindex="0" aria-label="${escapeAttr(d.name)}, transferring ${pct}%">
+      <span class="row-ring">${ring}</span>
+      <span class="row-name">${escapeHtml(d.name)}</span>
+      <span class="row-trailing row-trailing-xfer">${trailingContent}</span>
+    </div>
+  `;
+}
+
+/**
+ * Build a device row in the "success" state (check-circle icon, green flash).
+ *
+ * @param {object} d
+ * @param {object} xfer
+ * @param {string} statusClass
+ * @param {string} selectedClass
+ * @returns {string}
+ */
+function deviceRowSuccessHTML(d, xfer, statusClass, selectedClass) {
+  // Inline check-circle SVG (16px) since beam-icons.js has a placeholder.
+  const checkCircle = `<svg class="state-icon success-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`;
+
+  const sizeStr = formatBytes(xfer.bytesTotal);
+
+  return `
+    <div class="device-row transfer-success ${statusClass} ${selectedClass}" data-id="${escapeAttr(d.deviceId)}"
+         role="button" tabindex="0" aria-label="${escapeAttr(d.name)}, transfer complete">
+      <span class="row-state-icon">${checkCircle}</span>
+      <span class="row-name">${escapeHtml(d.name)}</span>
+      <span class="row-trailing row-trailing-done">
+        <span class="xfer-verb">sent</span>
+        <span class="xfer-filename">${escapeHtml(truncateFilename(xfer.fileName, 16))}</span>
+        <span class="xfer-bytes">${sizeStr}</span>
+      </span>
+    </div>
+  `;
+}
+
+/**
+ * Build a device row in the "failed" state (x-circle icon, red background, retry chip).
+ *
+ * @param {object} d
+ * @param {object} xfer
+ * @param {string} statusClass
+ * @param {string} selectedClass
+ * @param {string} icon
+ * @returns {string}
+ */
+function deviceRowFailedHTML(d, xfer, statusClass, selectedClass, icon) {
+  // Inline x-circle SVG (16px) since beam-icons.js has a placeholder.
+  const xCircle = `<svg class="state-icon danger-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>`;
+
+  const errorMsg = escapeHtml(xfer.error || 'Transfer failed');
+
+  return `
+    <div class="device-row transfer-failed ${statusClass} ${selectedClass}" data-id="${escapeAttr(d.deviceId)}"
+         role="button" tabindex="0" aria-label="${escapeAttr(d.name)}, transfer failed">
+      <span class="row-state-icon">${xCircle}</span>
+      <span class="row-name">${escapeHtml(d.name)}</span>
+      <span class="row-trailing row-trailing-error">
+        <span class="xfer-error-msg">${errorMsg}</span>
+        <span class="retry-chip" data-retry-device="${escapeAttr(d.deviceId)}">retry</span>
+      </span>
+    </div>
+  `;
+}
+
+/**
+ * Truncate a filename to maxLen characters, preserving the extension.
+ *
+ * @param {string} name
+ * @param {number} maxLen
+ * @returns {string}
+ */
+function truncateFilename(name, maxLen) {
+  if (!name || name.length <= maxLen) return name || '';
+  const dotIdx = name.lastIndexOf('.');
+  if (dotIdx > 0 && name.length - dotIdx <= 6) {
+    // Preserve extension (up to 5 chars + dot).
+    const ext  = name.slice(dotIdx);
+    const base = name.slice(0, maxLen - ext.length - 1);
+    return base + '\u2026' + ext;
+  }
+  return name.slice(0, maxLen - 1) + '\u2026';
+}
+
+/**
+ * Re-render the active transfer progress bars.
+ *
+ * Phase 2c: the old separate progress-bar section is replaced by inline
+ * device-row states. This function now hides the legacy section and
+ * triggers a device list re-render so the inline states are visible.
+ */
+function renderActiveTransfers() {
+  // Hide the legacy active-transfers section (Phase 2c replacement).
+  const section = document.getElementById('active-transfers');
+  if (section) section.innerHTML = '';
+
+  // Re-render device rows so inline transfer states are reflected.
+  renderDeviceRowsOnly();
+}
+
+/**
+ * Re-render ONLY the device rows without resetting selection or re-running
+ * the full renderDevices() logic. This avoids selection flicker during
+ * live transfer progress updates.
+ */
+function renderDeviceRowsOnly() {
+  const list = document.getElementById('device-list');
+  if (!list) return;
+
+  list.innerHTML = currentDevices
+    .map(d => deviceRowHTML(d))
+    .join('');
+
+  // Re-attach click handler (event delegation on the list container).
+  list.onclick = handleDeviceListClick;
 }
 
 /**
@@ -918,31 +1127,61 @@ function handleMessage(msg) {
       break;
     }
 
-    // ── Transfer progress ────────────────────────────────────────────────────
+    // ── Transfer progress (Phase 2c: inline device-row states) ──────────────
     case MSG.TRANSFER_PROGRESS: {
-      const { transferId, fileName, bytesTransferred, totalBytes, speedBps } = msg.payload ?? {};
+      const { transferId, fileName, bytesTransferred, totalBytes, speedBps, targetDeviceId } = msg.payload ?? {};
       if (transferId) {
         activeTransfers.set(transferId, { transferId, fileName, bytesTransferred, totalBytes, speedBps });
+
+        // Phase 2c: feed into per-device transfer map for inline rendering.
+        const deviceId = targetDeviceId || resolveDeviceIdFromTransfer(transferId);
+        if (deviceId) {
+          const pct = totalBytes > 0 ? Math.round((bytesTransferred / totalBytes) * 100) : 0;
+          activeTransfersByDevice.set(deviceId, {
+            percent: pct,
+            fileName: fileName || 'file',
+            bytesTransferred: bytesTransferred || 0,
+            bytesTotal: totalBytes || 0,
+            direction: 'out',
+            transferId,
+            state: 'progress',
+            targetDeviceId: deviceId,
+          });
+        }
         renderActiveTransfers();
       }
       break;
     }
 
     case MSG.TRANSFER_COMPLETE: {
-      const { transferId, fileName } = msg.payload ?? {};
+      const { transferId, fileName, fileSize, targetDeviceId } = msg.payload ?? {};
       if (transferId) activeTransfers.delete(transferId);
-      renderActiveTransfers();
-      showToast(`Sent "${escapeHtml(fileName ?? 'file')}" successfully.`, 'success');
-      // Reload history so the new record appears.
+
+      // Phase 2c: transition to success state on the device row.
+      const deviceId = targetDeviceId || resolveDeviceIdFromTransfer(transferId);
+      if (deviceId) {
+        handleTransferSuccess(deviceId, transferId, fileName, fileSize);
+      } else {
+        // Fallback: no device mapping, just clear and toast.
+        renderActiveTransfers();
+        showToast(`Sent "${escapeHtml(fileName ?? 'file')}" successfully.`, 'success');
+      }
       loadTransferHistory();
       break;
     }
 
     case MSG.TRANSFER_FAILED: {
-      const { transferId, reason } = msg.payload ?? {};
+      const { transferId, reason, targetDeviceId } = msg.payload ?? {};
       if (transferId) activeTransfers.delete(transferId);
-      renderActiveTransfers();
-      showToast(`Transfer failed: ${escapeHtml(reason ?? 'unknown error')}`, 'error');
+
+      // Phase 2c: transition to failed state on the device row.
+      const deviceId = targetDeviceId || resolveDeviceIdFromTransfer(transferId);
+      if (deviceId) {
+        handleTransferFailure(deviceId, transferId, reason);
+      } else {
+        renderActiveTransfers();
+        showToast(`Transfer failed: ${escapeHtml(reason ?? 'unknown error')}`, 'error');
+      }
       loadTransferHistory();
       break;
     }
@@ -971,12 +1210,22 @@ function handleMessage(msg) {
 
     // ── Presence ─────────────────────────────────────────────────────────────
     case MSG.DEVICE_PRESENCE_CHANGED:
-      // Merge single-device presence update without a full storage reload.
-      if (msg.payload?.deviceId) {
+      // Phase 2c: detect relay reset (WS close) vs individual device presence.
+      if (msg.payload?.reset) {
+        // Relay WS closed — all devices go offline, show error banner.
+        currentDevices = currentDevices.map(d => ({ ...d, isOnline: false }));
+        showRelayErrorBanner();
+        renderDevices();
+      } else if (msg.payload?.deviceId) {
         const { deviceId, online } = msg.payload;
         currentDevices = currentDevices.map(d =>
           d.deviceId === deviceId ? { ...d, isOnline: !!online } : d
         );
+
+        // If any device comes back online, hide the relay error banner.
+        if (online && relayErrorActive) {
+          hideRelayErrorBanner();
+        }
         renderDevices();
       }
       break;
@@ -1067,6 +1316,12 @@ async function sendFile(file) {
   }
   base64 = btoa(base64);
 
+  // Phase 2c: start mock progress animation on the device row while the real
+  // transfer is dispatched. If the SW sends TRANSFER_PROGRESS with a
+  // targetDeviceId, the mock will be overridden by real data. If not, the
+  // mock provides a smooth 0->100% animation as a visual placeholder.
+  startMockTransferProgress(targetId, file.name, file.size);
+
   chrome.runtime.sendMessage({
     type: 'SEND_FILE',
     payload: {
@@ -1078,13 +1333,12 @@ async function sendFile(file) {
       rendezvousId,
     },
   }).then(resp => {
-    if (resp?.ok) {
-      showToast('Sending ' + escapeHtml(file.name) + '...', 'success');
-    } else {
-      showToast('Send failed: relay not connected.', 'error');
+    if (!resp?.ok) {
+      // Send was rejected — transition device row to failed state.
+      handleTransferFailure(targetId, 'send-' + Date.now(), 'relay not connected');
     }
   }).catch(err => {
-    showToast(`Could not send file: ${err.message}`, 'error');
+    handleTransferFailure(targetId, 'send-' + Date.now(), err.message);
   });
 }
 
@@ -1228,20 +1482,35 @@ async function sendTabUrl() {
 // ---------------------------------------------------------------------------
 
 /**
- * Handle clicks in the device list (Phase 2a):
+ * Handle clicks in the device list (Phase 2a + 2c):
  *   - Clicking a .device-row selects it as the transfer target.
  *   - Clicking the trailing "send" text on an online row opens the file picker.
+ *   - Phase 2c: clicking a .retry-chip retries the failed transfer.
  *
  * @param {MouseEvent} e
  */
 function handleDeviceListClick(e) {
+  // Phase 2c: retry chip click.
+  const retryChip = e.target.closest('.retry-chip[data-retry-device]');
+  if (retryChip) {
+    const deviceId = retryChip.dataset.retryDevice;
+    if (deviceId) retryTransfer(deviceId);
+    return;
+  }
+
   // Row selection
   const row = e.target.closest('.device-row');
-  if (!row || row.classList.contains('offline')) return;
+  if (!row) return;
+
+  // Phase 2c: don't allow interaction on failed rows except via retry.
+  if (row.classList.contains('transfer-failed')) return;
+
+  // Don't allow clicking offline rows.
+  if (row.classList.contains('offline')) return;
 
   // If user clicked the "send" trailing text, open file picker.
   const trailing = e.target.closest('.row-trailing');
-  if (trailing && row.dataset.id) {
+  if (trailing && row.dataset.id && !row.classList.contains('transferring') && !row.classList.contains('transfer-success')) {
     selectedDeviceId = row.dataset.id;
     el('file-input').click();
     // Still select the row visually below.
@@ -1421,6 +1690,249 @@ function renderSettingsPairedDevices(devices) {
     await loadDevices();
     showToast('Device unpaired.', 'success');
   };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2c — Transfer state transitions
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a deviceId from a transferId by searching the activeTransfersByDevice map.
+ * Returns null if no mapping is found.
+ *
+ * @param {string} transferId
+ * @returns {string|null}
+ */
+function resolveDeviceIdFromTransfer(transferId) {
+  for (const [deviceId, xfer] of activeTransfersByDevice) {
+    if (xfer.transferId === transferId) return deviceId;
+  }
+  return null;
+}
+
+/**
+ * Transition a device row to the success state, hold for 600ms, then fade back.
+ *
+ * @param {string} deviceId
+ * @param {string} transferId
+ * @param {string} [fileName]
+ * @param {number} [fileSize]
+ */
+function handleTransferSuccess(deviceId, transferId, fileName, fileSize) {
+  // Cancel any pending success timer for this device.
+  if (successTimers.has(deviceId)) {
+    clearTimeout(successTimers.get(deviceId));
+    successTimers.delete(deviceId);
+  }
+
+  const existing = activeTransfersByDevice.get(deviceId);
+
+  // Set to 100% progress first (ring fills).
+  activeTransfersByDevice.set(deviceId, {
+    percent: 100,
+    fileName: fileName || existing?.fileName || 'file',
+    bytesTransferred: fileSize || existing?.bytesTotal || 0,
+    bytesTotal: fileSize || existing?.bytesTotal || 0,
+    direction: existing?.direction || 'out',
+    transferId,
+    state: 'success',
+    targetDeviceId: deviceId,
+  });
+
+  renderDeviceRowsOnly();
+
+  // After SUCCESS_HOLD_MS, fade back to idle and add to activity list.
+  const timer = setTimeout(() => {
+    successTimers.delete(deviceId);
+    activeTransfersByDevice.delete(deviceId);
+    renderDeviceRowsOnly();
+  }, SUCCESS_HOLD_MS);
+
+  successTimers.set(deviceId, timer);
+}
+
+/**
+ * Transition a device row to the failed state with retry option.
+ *
+ * @param {string} deviceId
+ * @param {string} transferId
+ * @param {string} [reason]
+ */
+function handleTransferFailure(deviceId, transferId, reason) {
+  const existing = activeTransfersByDevice.get(deviceId);
+
+  activeTransfersByDevice.set(deviceId, {
+    percent: existing?.percent || 0,
+    fileName: existing?.fileName || 'file',
+    bytesTransferred: existing?.bytesTransferred || 0,
+    bytesTotal: existing?.bytesTotal || 0,
+    direction: existing?.direction || 'out',
+    transferId,
+    state: 'failed',
+    error: reason || 'Transfer failed',
+    targetDeviceId: deviceId,
+    sendPayload: existing?.sendPayload || null,
+  });
+
+  renderDeviceRowsOnly();
+}
+
+/**
+ * Retry a failed transfer for a given device.
+ * Clears the error state and re-triggers the send.
+ *
+ * @param {string} deviceId
+ */
+function retryTransfer(deviceId) {
+  const xfer = activeTransfersByDevice.get(deviceId);
+  if (!xfer || xfer.state !== 'failed') return;
+
+  // Clear the failed state.
+  activeTransfersByDevice.delete(deviceId);
+  renderDeviceRowsOnly();
+
+  // Re-trigger: select the device and open the file picker.
+  // If the original sendPayload was stored, we could re-send automatically,
+  // but for safety we prompt the user to re-select the file.
+  selectedDeviceId = deviceId;
+  updateSelection(deviceId);
+  el('file-input').click();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2c — Mock transfer progress (for testing without real SW data)
+// ---------------------------------------------------------------------------
+
+/**
+ * Start a mock 3-second transfer animation on the given device.
+ * Used when the real transfer data flow doesn't include targetDeviceId
+ * or when testing the UI without a connected relay.
+ *
+ * @param {string} deviceId
+ * @param {string} fileName
+ * @param {number} fileSize
+ */
+function startMockTransferProgress(deviceId, fileName, fileSize) {
+  const transferId = 'mock-' + Date.now();
+  const duration   = 3000; // 3 seconds
+  const startTime  = Date.now();
+
+  activeTransfersByDevice.set(deviceId, {
+    percent: 0,
+    fileName,
+    bytesTransferred: 0,
+    bytesTotal: fileSize,
+    direction: 'out',
+    transferId,
+    state: 'progress',
+    targetDeviceId: deviceId,
+  });
+
+  renderDeviceRowsOnly();
+
+  const interval = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const pct     = Math.min(100, Math.round((elapsed / duration) * 100));
+    const bytes   = Math.round((pct / 100) * fileSize);
+
+    const entry = activeTransfersByDevice.get(deviceId);
+    if (!entry || entry.transferId !== transferId) {
+      clearInterval(interval);
+      return;
+    }
+
+    entry.percent = pct;
+    entry.bytesTransferred = bytes;
+    renderDeviceRowsOnly();
+
+    if (pct >= 100) {
+      clearInterval(interval);
+      handleTransferSuccess(deviceId, transferId, fileName, fileSize);
+    }
+  }, 50);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2c — Relay error banner
+// ---------------------------------------------------------------------------
+
+/**
+ * Show the surface-wide relay error banner at the top of #main-list.
+ * Dims all device rows and makes them non-interactive.
+ */
+function showRelayErrorBanner() {
+  if (relayErrorActive) return;
+  relayErrorActive = true;
+
+  const mainList = document.getElementById('main-list');
+  if (!mainList) return;
+
+  mainList.classList.add('relay-error');
+
+  // Build the banner element.
+  let banner = document.getElementById('error-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'error-banner';
+    banner.className = 'error-banner';
+
+    // Inline x-circle SVG for the error icon.
+    const xCircleSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>`;
+
+    banner.innerHTML = `
+      <span class="error-icon">${xCircleSvg}</span>
+      <span class="error-message">relay unreachable. retrying in <span id="error-countdown">5</span>s.</span>
+      <button class="retry-chip" id="error-retry">retry</button>
+    `;
+
+    mainList.insertBefore(banner, mainList.firstChild);
+
+    // Wire retry button.
+    document.getElementById('error-retry')?.addEventListener('click', () => {
+      // Attempt immediate reconnect via the SW.
+      chrome.runtime.sendMessage({ type: 'RELAY_RECONNECT' }).catch(() => {});
+      const countdown = document.getElementById('error-countdown');
+      if (countdown) countdown.textContent = '...';
+    });
+  }
+
+  // Start countdown (5 seconds, auto-decrement).
+  let remaining = 5;
+  const countdown = document.getElementById('error-countdown');
+  if (countdown) countdown.textContent = String(remaining);
+
+  if (relayCountdownHandle) clearInterval(relayCountdownHandle);
+  relayCountdownHandle = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      remaining = 5; // Reset: relay auto-reconnect typically fires every 5s.
+    }
+    const el = document.getElementById('error-countdown');
+    if (el) el.textContent = String(remaining);
+  }, 1000);
+
+  renderDeviceRowsOnly();
+}
+
+/**
+ * Hide the relay error banner and restore device rows to interactive state.
+ */
+function hideRelayErrorBanner() {
+  if (!relayErrorActive) return;
+  relayErrorActive = false;
+
+  if (relayCountdownHandle) {
+    clearInterval(relayCountdownHandle);
+    relayCountdownHandle = null;
+  }
+
+  const mainList = document.getElementById('main-list');
+  if (mainList) mainList.classList.remove('relay-error');
+
+  const banner = document.getElementById('error-banner');
+  if (banner) banner.remove();
+
+  renderDeviceRowsOnly();
 }
 
 // ---------------------------------------------------------------------------
@@ -1705,6 +2217,16 @@ function handleGlobalKeydown(e) {
       return;
     }
 
+    // Phase 2c: if the selected device has a failed transfer, dismiss the error.
+    if (selectedDeviceId && activeTransfersByDevice.has(selectedDeviceId)) {
+      const xfer = activeTransfersByDevice.get(selectedDeviceId);
+      if (xfer && xfer.state === 'failed') {
+        activeTransfersByDevice.delete(selectedDeviceId);
+        renderDeviceRowsOnly();
+        return;
+      }
+    }
+
     // If on a non-main view, return to main.
     const view = currentView();
     if (view !== 'main') {
@@ -1768,6 +2290,13 @@ function handleGlobalKeydown(e) {
       }
 
       if (!selectedDeviceId) return;
+
+      // Phase 2c: if the selected device has a failed transfer, retry it.
+      const xferState = activeTransfersByDevice.get(selectedDeviceId);
+      if (xferState && xferState.state === 'failed') {
+        retryTransfer(selectedDeviceId);
+        return;
+      }
 
       // Check if the selected device is online.
       const device = currentDevices.find(d => d.deviceId === selectedDeviceId);
