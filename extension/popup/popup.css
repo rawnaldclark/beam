@@ -190,8 +190,9 @@ html, body {
   color:           var(--text-md);
   cursor:          pointer;
   font-size:       16px;
-  transition:      background var(--transition), color var(--transition),
-                   border-color var(--transition);
+  transition:      background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                   color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                   border-color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
 }
 
 .icon-btn:hover {
@@ -412,7 +413,7 @@ html, body {
   background:     var(--surface-2);
   border-bottom:  1px solid var(--border);
   color:          var(--text-hi);
-  transition:     opacity var(--transition);
+  transition:     opacity var(--beam-dur-base, 180ms) var(--beam-ease-out, ease);
 }
 
 .toast.success { background: var(--success-dim); color: var(--success); }
@@ -643,7 +644,8 @@ html, body {
   color:         var(--text-hi);
   font-size:     14px;
   outline:       none;
-  transition:    border-color var(--transition), box-shadow var(--transition);
+  transition:    border-color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                 box-shadow var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
 }
 
 .naming-form input[type="text"]::placeholder {
@@ -685,7 +687,8 @@ html, body {
   font-size:       14px;
   font-weight:     600;
   cursor:          pointer;
-  transition:      background var(--transition), opacity var(--transition);
+  transition:      background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                   opacity var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
 }
 
 .primary-btn:hover:not(:disabled) { background: var(--primary-hv); }
@@ -711,7 +714,8 @@ html, body {
   border:          1px solid var(--border);
   border-radius:   var(--radius-md);
   cursor:          pointer;
-  transition:      border-color var(--transition), background var(--transition);
+  transition:      border-color var(--beam-dur-base, 180ms) var(--beam-ease-out, ease),
+                   background var(--beam-dur-base, 180ms) var(--beam-ease-out, ease);
   user-select:     none;
 }
 
@@ -804,7 +808,7 @@ html, body {
   font-size:     12px;
   font-weight:   600;
   cursor:        pointer;
-  transition:    background var(--transition);
+  transition:    background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
 }
 
 .send-file-btn:hover  { background: var(--primary-hv); }
@@ -847,7 +851,8 @@ html, body {
   border:         1px dashed var(--beam-border-subtle, var(--border));
   border-radius:  var(--beam-radius-lg, 8px);
   cursor:         pointer;
-  transition:     border-color var(--transition), background var(--transition);
+  transition:     border-color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                  background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
   text-align:     center;
   background:     var(--beam-bg-1, var(--surface));
 }
@@ -907,8 +912,9 @@ html, body {
   font-size:       11px;
   font-weight:     500;
   cursor:          pointer;
-  transition:      background var(--transition), border-color var(--transition),
-                   color var(--transition);
+  transition:      background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                   border-color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                   color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
   line-height:     1.3;
 }
 
@@ -1078,7 +1084,8 @@ html, body {
   color:         var(--text-md);
   cursor:        pointer;
   flex-shrink:   0;
-  transition:    background var(--transition), color var(--transition);
+  transition:    background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                 color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
 }
 
 .history-item-copy:hover {
@@ -1104,8 +1111,9 @@ html, body {
   font-size:     13px;
   font-weight:   600;
   cursor:        pointer;
-  transition:    background var(--transition), color var(--transition),
-                 border-color var(--transition);
+  transition:    background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                 color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                 border-color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
   border:        1px solid transparent;
 }
 
@@ -1234,7 +1242,7 @@ html, body {
   color:         var(--beam-text-hi, var(--text-hi));
   font-size:     var(--beam-size-base, 13px);
   outline:       none;
-  transition:    border-color var(--transition);
+  transition:    border-color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
 }
 
 .settings-inline-input:focus {
@@ -1311,7 +1319,8 @@ html, body {
   font-weight:   600;
   cursor:        pointer;
   flex-shrink:   0;
-  transition:    background var(--transition), color var(--transition);
+  transition:    background var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease),
+                 color var(--beam-dur-fast, 120ms) var(--beam-ease-out, ease);
 }
 
 .unpair-btn:hover {
@@ -1549,7 +1558,7 @@ html, body {
   border-bottom: 1px solid var(--beam-border-subtle, var(--border));
   font-size:     13px;
   color:         var(--beam-text-hi, var(--text-hi));
-  animation:     banner-slide-in 180ms var(--beam-ease-out, ease) both;
+  animation:     banner-slide-in var(--beam-dur-base, 180ms) var(--beam-ease-out, ease) both;
 }
 
 @keyframes banner-slide-in {
@@ -1584,3 +1593,107 @@ html, body {
 #main-list.relay-error .activity-row {
   opacity: 0.55;
 }
+
+/* ==========================================================================
+   Phase 4 — Motion, focus, accessibility polish
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   4a. Popup open animation
+   -------------------------------------------------------------------------- */
+#app {
+  animation: popup-enter var(--beam-dur-base, 180ms) var(--beam-ease-out, ease) both;
+}
+
+@keyframes popup-enter {
+  from { opacity: 0; transform: scale(0.98); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* --------------------------------------------------------------------------
+   4b. View slide-in transition (entering a secondary view)
+   -------------------------------------------------------------------------- */
+.view.entering {
+  animation: view-slide-in var(--beam-dur-base, 180ms) var(--beam-ease-out, ease) both;
+}
+
+@keyframes view-slide-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.view.returning {
+  animation: view-slide-return var(--beam-dur-base, 180ms) var(--beam-ease-out, ease) both;
+}
+
+@keyframes view-slide-return {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* --------------------------------------------------------------------------
+   4c. Device row enter stagger
+   -------------------------------------------------------------------------- */
+.device-row.stagger-enter {
+  animation: row-enter var(--beam-dur-slow, 260ms) var(--beam-ease-out, ease) both;
+}
+
+@keyframes row-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* --------------------------------------------------------------------------
+   4d. Focus ring (accessibility)
+   -------------------------------------------------------------------------- */
+:focus-visible {
+  outline: 1px solid var(--beam-accent, var(--primary));
+  outline-offset: 2px;
+}
+
+button:focus-visible,
+.device-row:focus-visible {
+  outline: 1px solid var(--beam-accent, var(--primary));
+  outline-offset: -1px;
+}
+
+/* --------------------------------------------------------------------------
+   4e. QR container hairline separation
+   -------------------------------------------------------------------------- */
+.qr-container {
+  box-shadow: 0 0 0 1px var(--beam-border-subtle, var(--border));
+}
+
+/* --------------------------------------------------------------------------
+   4f. Shortcut footer: sticky at the bottom, never scrolls
+   -------------------------------------------------------------------------- */
+#shortcut-footer {
+  position: sticky;
+  bottom:   0;
+  z-index:  5;
+}
+
+/* --------------------------------------------------------------------------
+   4g. Drop zone: ensure it doesn't overlap the footer
+   -------------------------------------------------------------------------- */
+.drop-zone {
+  flex-shrink: 0;
+}
+
+/* --------------------------------------------------------------------------
+   4h. Reduced motion (accessibility)
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Contrast note: text/lo (#6B7280) on bg/0 (#0A0B0D) yields ~4.2:1.
+   This passes AA for large text but is borderline for small text.
+   text/lo is only used for non-critical metadata (timestamps, placeholders,
+   footer chips, trailing labels). If any text/lo is ever used for critical
+   information, revisit contrast.
+   -------------------------------------------------------------------------- */

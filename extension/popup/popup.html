@@ -40,7 +40,7 @@
       <div class="view-back" id="pairing-back" role="button" tabindex="0"
            aria-label="Back to main view"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg> Back</div>
       <div class="view-body">
-        <h3 class="view-title">Pair a Device</h3>
+        <h3 class="view-title">Pair a device</h3>
 
         <!-- QR code renders into this element -->
         <div id="qr-container" class="qr-container" aria-label="QR code">
@@ -51,7 +51,7 @@
           </div>
         </div>
 
-        <p class="subtitle">Scan with Beam on your phone</p>
+        <p class="subtitle">Scan with the app on your phone</p>
 
         <div class="pin-display">
           <span class="pin-label">PIN</span>
@@ -70,14 +70,14 @@
       <div class="view-back" id="sas-back" role="button" tabindex="0"
            aria-label="Back to main view"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg> Back</div>
       <div class="view-body">
-        <h3 class="view-title">Verify Connection</h3>
+        <h3 class="view-title">Verify connection</h3>
         <p class="view-desc">Do these emoji match on both devices?</p>
 
         <div id="sas-emojis" class="sas-grid" aria-label="Security emoji"></div>
 
         <div class="btn-group">
-          <button id="sas-cancel"  class="btn ghost danger-text">No Match</button>
-          <button id="sas-confirm" class="btn primary">They Match</button>
+          <button id="sas-cancel"  class="btn ghost danger-text">No match</button>
+          <button id="sas-confirm" class="btn primary">They match</button>
         </div>
       </div>
     </div>
@@ -89,7 +89,7 @@
       <div class="view-back" id="naming-back" role="button" tabindex="0"
            aria-label="Back to main view"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg> Back</div>
       <div class="view-body">
-        <h3 class="view-title">Name This Device</h3>
+        <h3 class="view-title">Name this device</h3>
         <!-- createNamingForm() injects its markup here -->
         <div id="naming-container"></div>
       </div>
@@ -135,7 +135,7 @@
                value="Chrome" maxlength="30" aria-label="Device name">
       </div>
 
-      <div class="settings-section-header">Paired Devices</div>
+      <div class="settings-section-header">Paired devices</div>
       <div id="settings-paired-devices"></div>
 
       <div class="settings-section-header">About</div>
@@ -176,23 +176,23 @@
 
       <!-- Drop zone for file transfers -->
       <div id="drop-zone" class="drop-zone" role="button" tabindex="0"
-           aria-label="Drop files here or click to browse">
+           aria-label="Drop a file or paste content">
         <span class="drop-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg></span>
-        <span class="drop-label">Drop files here or click to browse</span>
+        <span class="drop-label">Drop a file or paste content</span>
         <input type="file" id="file-input" multiple hidden aria-hidden="true">
       </div>
 
       <!-- Quick action buttons -->
       <div class="quick-actions" role="group" aria-label="Quick send actions">
-        <button id="btn-clipboard"   class="quick-btn" title="Send clipboard contents"
+        <button id="btn-clipboard"   class="quick-btn" title="Send clipboard"
                 aria-label="Send clipboard">
           <span aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></span> Clipboard
         </button>
-        <button id="btn-screenshot"  class="quick-btn" title="Send screenshot of current tab"
+        <button id="btn-screenshot"  class="quick-btn" title="Send screenshot"
                 aria-label="Send screenshot">
           <span aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg></span> Screen
         </button>
-        <button id="btn-tab-url"     class="quick-btn" title="Send URL of current tab"
+        <button id="btn-tab-url"     class="quick-btn" title="Send tab URL"
                 aria-label="Send tab URL">
           <span aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span> Tab URL
         </button>
@@ -201,7 +201,7 @@
     </div><!-- /view-main -->
 
     <!-- ===== Shortcut footer (Phase 2a) ===== -->
-    <div id="shortcut-footer">
+    <div id="shortcut-footer" aria-hidden="true">
       <span class="shortcut-chip">&#x23CE; send</span>
       <span class="shortcut-chip">&#x2191;&#x2193; select</span>
       <span class="shortcut-chip">/ filter</span>

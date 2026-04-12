@@ -365,6 +365,19 @@ function renderDevices() {
 
   // Attach click handlers via event delegation on the list container.
   list.onclick = handleDeviceListClick;
+
+  // Phase 4: stagger-enter animation for device rows (max 3 rows staggered).
+  const rows = list.querySelectorAll('.device-row');
+  rows.forEach((row, i) => {
+    if (i < 3) {
+      row.style.animationDelay = `${i * 30}ms`;
+      row.classList.add('stagger-enter');
+      row.addEventListener('animationend', () => {
+        row.classList.remove('stagger-enter');
+        row.style.animationDelay = '';
+      }, { once: true });
+    }
+  });
 }
 
 /**
@@ -715,7 +728,7 @@ function renderReceivedFile(file) {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      showToast('Download started!', 'success');
+      showToast('Download started.', 'success');
     } catch (err) {
       showToast('Download failed: ' + err.message, 'error');
     }
@@ -739,10 +752,33 @@ function renderReceivedFile(file) {
  *
  * @param {'main'|'pairing'|'sas'|'naming'} name
  */
+/** Tracks the last active view name so we can determine slide direction. */
+let _lastViewName = 'main';
+
 function showView(name) {
   const ids = ['view-main', 'view-pairing', 'view-sas', 'view-naming', 'view-settings'];
   ids.forEach(id => document.getElementById(id)?.classList.add('hidden'));
-  document.getElementById(`view-${name}`)?.classList.remove('hidden');
+
+  const newView = document.getElementById(`view-${name}`);
+  if (!newView) return;
+  newView.classList.remove('hidden');
+
+  // Phase 4: apply slide-in animation class based on direction.
+  const isReturning = name === 'main' && _lastViewName !== 'main';
+  const isEntering  = name !== 'main' && _lastViewName === 'main';
+  newView.classList.remove('entering', 'returning');
+  if (isEntering) {
+    newView.classList.add('entering');
+  } else if (isReturning) {
+    newView.classList.add('returning');
+  }
+  _lastViewName = name;
+
+  // Phase 4: focus management — move focus to the first interactive element
+  // in the newly visible view after the animation frame settles.
+  setTimeout(() => {
+    newView.querySelector('button, [tabindex="0"], input')?.focus();
+  }, 50);
 
   // Phase 3a: manage the shortcut footer based on active view.
   // Secondary views show a minimal "esc back" footer; main shows the full footer.
@@ -812,14 +848,14 @@ async function showPairingView() {
     console.log('[Beam popup] startPairing returned:', JSON.stringify(qrData));
   } catch (err) {
     console.error('[Beam popup] startPairing failed:', err);
-    showToast('Could not start pairing. Is the extension background running?', 'error');
+    showToast('Could not start pairing — background service unavailable.', 'error');
     showView('main');
     return;
   }
 
   if (!qrData) {
     console.error('[Beam popup] qrData is null/undefined — key generation failed');
-    showToast('Pairing service unavailable. Try again in a moment.', 'error');
+    showToast('Pairing service unavailable, try again in a moment.', 'error');
     showView('main');
     return;
   }
@@ -871,7 +907,7 @@ async function showPairingView() {
     chrome.runtime.sendMessage({ type: 'STOP_PAIRING_LISTENER' }).catch(() => {});
     // Only show error if we are still on the pairing view (user may have cancelled)
     if (!document.getElementById('view-pairing')?.classList.contains('hidden')) {
-      showToast('Pairing timed out. Try again.', 'error');
+      showToast('Pairing timed out, try again.', 'error');
       showView('main');
     }
   }
@@ -886,7 +922,7 @@ async function showPairingView() {
 async function confirmSAS() {
   if (!pendingPairing || !pairingDeviceId) {
     console.error('[Beam popup] confirmSAS called without pending pairing data');
-    showToast('Pairing state lost. Please try again.', 'error');
+    showToast('Pairing state lost, try again.', 'error');
     showView('main');
     return;
   }
@@ -935,7 +971,7 @@ async function confirmSAS() {
 
     await loadDevices();
     showView('main');
-    showToast(`"${escapeHtml(name)}" paired successfully!`, 'success');
+    showToast(`"${escapeHtml(name)}" paired successfully.`, 'success');
   });
 }
 
@@ -1210,7 +1246,7 @@ function handleMessage(msg) {
         }
         await loadDevices();
         showView('main');
-        showToast(`"${escapeHtml(name)}" paired successfully!`, 'success');
+        showToast(`"${escapeHtml(name)}" paired successfully.`, 'success');
       });
       break;
     }
@@ -1473,7 +1509,7 @@ async function sendClipboard() {
     },
   }).then(resp => {
     if (resp?.ok) {
-      showToast('Clipboard sent!', 'success');
+      showToast('Clipboard sent.', 'success');
     } else {
       showToast('Send failed: relay not connected.', 'error');
     }
@@ -1524,7 +1560,7 @@ async function sendScreenshot() {
     },
   }).catch(err => showToast(`Send failed: ${err.message}`, 'error'));
 
-  showToast('Screenshot sent!', 'success');
+  showToast('Screenshot sent.', 'success');
 }
 
 /**
@@ -1562,7 +1598,7 @@ async function sendTabUrl() {
     },
   }).catch(err => showToast(`Send failed: ${err.message}`, 'error'));
 
-  showToast('Tab URL sent!', 'success');
+  showToast('Tab URL sent.', 'success');
 }
 
 // ---------------------------------------------------------------------------
@@ -1677,7 +1713,7 @@ function handleClipboardResend(e) {
     },
   }).catch(err => showToast(`Resend failed: ${err.message}`, 'error'));
 
-  showToast('Clipboard item resent!', 'success');
+  showToast('Clipboard item resent.', 'success');
 }
 
 // ---------------------------------------------------------------------------
@@ -2226,7 +2262,7 @@ function activateFilter() {
   bar.id = 'filter-bar';
   bar.innerHTML = `
     <span class="filter-prefix">/</span>
-    <input type="text" id="filter-input" placeholder="Filter devices" autocomplete="off">
+    <input type="text" id="filter-input" placeholder="Filter devices" autocomplete="off" aria-label="Filter devices">
     <span class="filter-hint">esc</span>
   `;
   mainList.insertBefore(bar, mainList.firstChild);
