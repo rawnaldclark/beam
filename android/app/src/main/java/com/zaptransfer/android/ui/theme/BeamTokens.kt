@@ -4,8 +4,10 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import com.zaptransfer.android.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -96,15 +98,25 @@ object BeamPalette {
  */
 object BeamTextStyle {
 
-    private val systemSans: FontFamily = FontFamily.Default
+    /**
+     * Inter Variable — bundled at res/font/inter_variable.ttf (~860 KB).
+     * Matches the Chrome extension's @font-face Inter exactly for full
+     * cross-platform visual parity. The variable font supports weights
+     * 100–900 on a single axis.
+     */
+    private val interFamily: FontFamily = FontFamily(
+        Font(R.font.inter_variable, FontWeight.Normal),   // 400
+        Font(R.font.inter_variable, FontWeight.Medium),    // 500
+        Font(R.font.inter_variable, FontWeight.SemiBold),  // 600
+    )
     private val systemMono: FontFamily = FontFamily.Monospace
 
-    /** Tabular figures always on for numerics. `cv11` on Inter would disambiguate 1/l/I; harmless on system fonts. */
-    private const val NUMERIC_FEATURES = "tnum"
+    /** Tabular figures + Inter character variant 11 for 1/l/I disambiguation. */
+    private const val NUMERIC_FEATURES = "tnum, cv11"
 
     // xs — 11 sp — shortcut chips, finest metadata.
     val xsRegular: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 11.sp,
         fontWeight = FontWeight.Normal,
         fontFeatureSettings = NUMERIC_FEATURES,
@@ -119,13 +131,13 @@ object BeamTextStyle {
 
     // sm — 12 sp — section headers, secondary rows.
     val smRegular: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 12.sp,
         fontWeight = FontWeight.Normal,
         fontFeatureSettings = NUMERIC_FEATURES,
     )
     val smMedium: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
         fontFeatureSettings = NUMERIC_FEATURES,
@@ -139,19 +151,19 @@ object BeamTextStyle {
 
     // base — 13 sp — default body, device names, row content.
     val baseRegular: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 13.sp,
         fontWeight = FontWeight.Normal,
         fontFeatureSettings = NUMERIC_FEATURES,
     )
     val baseMedium: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 13.sp,
         fontWeight = FontWeight.Medium,
         fontFeatureSettings = NUMERIC_FEATURES,
     )
     val baseSemibold: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 13.sp,
         fontWeight = FontWeight.SemiBold,
         fontFeatureSettings = NUMERIC_FEATURES,
@@ -159,14 +171,14 @@ object BeamTextStyle {
 
     // md — 14 sp — section titles, emphasized row leads. Tight tracking.
     val mdMedium: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = (-0.14).sp, // approx -0.01em
         fontFeatureSettings = NUMERIC_FEATURES,
     )
     val mdSemibold: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 14.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = (-0.14).sp,
@@ -175,7 +187,7 @@ object BeamTextStyle {
 
     // lg — 16 sp — surface titles.
     val lgSemibold: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 16.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = (-0.16).sp,
@@ -184,7 +196,7 @@ object BeamTextStyle {
 
     // xl — 22 sp — hero / pairing display type (SAS, PIN, hero alias).
     val xlSemibold: TextStyle = TextStyle(
-        fontFamily = systemSans,
+        fontFamily = interFamily,
         fontSize = 22.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = (-0.22).sp,
