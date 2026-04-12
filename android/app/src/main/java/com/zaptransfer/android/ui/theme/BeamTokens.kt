@@ -57,12 +57,14 @@ object BeamPalette {
     val accentHover: Color = Color(0xFF7BEDED)
 
     /**
-     * Selection-fill at 12% accent alpha. Supplementary depth cue only —
-     * the primary selection indicator is a 2 dp accent left border on the
-     * device / transfer row. See the contrast-audit note on `tokens.css`
-     * for why this alpha may be bumped during implementation testing.
+     * Selection-fill at 16% accent alpha. Named `accent12` by convention
+     * but tuned from 12% to 16% after the contrast audit: 12% produced
+     * only 1.24:1 contrast on bg/0 — below the 1.3 perceptual threshold.
+     * 16% yields 1.36:1 on bg/0 and 1.41:1 on bg/1 — passes. The
+     * primary selection cue remains a 2 dp accent left border; this fill
+     * is supplementary.
      */
-    val accent12: Color = accent.copy(alpha = 0.12f)
+    val accent12: Color = accent.copy(alpha = 0.16f)
 
     // Semantic — all muted, never bright.
     val success: Color = Color(0xFF5FB88C)

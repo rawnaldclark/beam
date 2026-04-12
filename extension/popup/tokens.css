@@ -17,6 +17,39 @@
    these must stay in sync with the Android BeamTokens.kt file.
    ========================================================================== */
 
+/* ==========================================================================
+   @font-face — Inter Variable + JetBrains Mono
+
+   Bundled from the extension's own `assets/fonts/` directory. Chrome MV3
+   extensions load @font-face from the extension origin (`chrome-extension://`)
+   which is covered by the CSP `script-src 'self'` policy — no
+   `web_accessible_resources` entry is needed because the font is consumed
+   by our own popup page, not by external web pages.
+
+   Inter Variable: 344 KB woff2, variable axes (weight 100–900).
+   JetBrains Mono Regular: 90 KB woff2, single weight 400.
+   ========================================================================== */
+
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../assets/fonts/InterVariable.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+}
+
+/* ==========================================================================
+   CSS Custom Properties (tokens)
+   ========================================================================== */
+
 :root {
 
   /* ─── Color — dark mode only (v1) ───────────────────────────────────── */
@@ -42,7 +75,7 @@
      and primary button. See contrast-audit note at bottom. */
   --beam-accent:        #5BE4E4;  /* full opacity — focus ring, progress fill, primary button bg */
   --beam-accent-hover:  #7BEDED;
-  --beam-accent-12:     rgba(91, 228, 228, 0.12);  /* selection fill (supplementary; primary cue is 2px left border) */
+  --beam-accent-12:     rgba(91, 228, 228, 0.16);  /* selection fill (tuned from 12% to 16% after contrast audit — 12% at 1.24:1 failed the 1.3 perceptual threshold; 16% at 1.36:1 passes; primary cue remains the 2px left border) */
 
   /* Semantic — all muted, never bright. */
   --beam-success:    #5FB88C;  /* transfer complete glyph + success-12 flash */
@@ -57,12 +90,10 @@
 
   /* ─── Typography ────────────────────────────────────────────────────── */
 
-  /* Primary sans: Inter Variable, bundled in a later sub-phase via
-     @font-face and web_accessible_resources. Until then, the system stack
-     is the effective fallback — it renders close enough that components
-     consuming --beam-font-sans will not break visually before the font
-     ships. */
+  /* Primary sans: Inter Variable, bundled at assets/fonts/InterVariable.woff2
+     via @font-face above. System stack follows as fallback. */
   --beam-font-sans: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Mono: JetBrains Mono Regular, bundled at assets/fonts/JetBrainsMono-Regular.woff2. */
   --beam-font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace;
 
   /* Pixel scale. Body is base=13. Never use arbitrary sizes outside this scale. */
@@ -152,13 +183,17 @@
 
    The `--beam-accent-12` selection-fill is a SUPPLEMENTARY depth cue; the
    PRIMARY indicator for selected state is a 2px accent left border on the
-   device/transfer row. Contrast of a 12% accent fill on bg/0 #0A0B0D is
-   approximately 2.5:1 effective luminance — below WCAG AA for non-text UI
-   (3:1). This is acceptable ONLY because the 2px left border carries the
-   real signal. If implementation testing reveals that the supplementary
-   fill is not visible enough to reinforce selection, bump the alpha to
-   0.16 or 0.20 and update this comment.
+   device/transfer row.
+
+   Contrast audit results (Signal Cyan #5BE4E4 on bg/0 #0A0B0D):
+     12% alpha: 1.24:1 — FAILED perceptual threshold (1.3:1)
+     16% alpha: 1.36:1 — PASSED (selected for v1)
+     20% alpha: 1.53:1 — comfortable margin
+
+   The token is named `accent-12` by convention but its actual alpha is
+   16% — tuned after the mathematical contrast audit. If future testing
+   reveals the fill still feels weak, bump to 20%.
 
    The primary, progress, and focus-ring uses of --beam-accent are at 100%
-   opacity and pass AA comfortably against bg/0 and bg/1.
+   opacity and pass AA comfortably (12.81:1 on bg/0, 12.11:1 on bg/1).
    ========================================================================== */
