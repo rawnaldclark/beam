@@ -155,7 +155,7 @@ private fun SettingsContent(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = BeamIcons.back,
-                            contentDescription = "Back",
+                            contentDescription = "Go back",
                             tint = BeamPalette.textMid,
                         )
                     }
@@ -184,11 +184,7 @@ private fun SettingsContent(
             item {
                 SettingsToggleRow(
                     label = "Auto-copy clipboard",
-                    description = if (uiState.prefs.autoCopyClipboard) {
-                        "Incoming clipboard content is copied automatically"
-                    } else {
-                        "Tap received clipboard items to copy manually"
-                    },
+                    description = "Automatically copy received clipboard content",
                     checked = uiState.prefs.autoCopyClipboard,
                     onCheckedChange = onAutoCopyChanged,
                     switchColors = beamSwitchColors,
@@ -200,11 +196,7 @@ private fun SettingsContent(
             item {
                 SettingsToggleRow(
                     label = "Auto-save files",
-                    description = if (uiState.prefs.autoSaveFiles) {
-                        "Incoming files are saved automatically"
-                    } else {
-                        "You will be prompted before saving received files"
-                    },
+                    description = "Automatically save received files to Downloads",
                     checked = uiState.prefs.autoSaveFiles,
                     onCheckedChange = onAutoSaveChanged,
                     switchColors = beamSwitchColors,
@@ -544,7 +536,13 @@ private fun PairedDeviceRow(
         // Device type icon
         Icon(
             imageVector = BeamIcons.forDeviceType(device.icon?.lowercase()),
-            contentDescription = null,
+            contentDescription = when (device.icon?.lowercase()) {
+                "laptop" -> "Laptop"
+                "desktop" -> "Desktop"
+                "phone" -> "Phone"
+                "tablet" -> "Tablet"
+                else -> "Device"
+            },
             tint = BeamPalette.textMid,
             modifier = Modifier.size(24.dp),
         )
@@ -558,10 +556,10 @@ private fun PairedDeviceRow(
             modifier = Modifier.weight(1f),
         )
 
-        // Unpair text button
+        // Unpair text button — announces device name for TalkBack
         TextButton(onClick = { showConfirm = true }) {
             Text(
-                text = "Unpair",
+                text = "Unpair ${device.name}",
                 style = BeamTextStyle.smMedium,
                 color = BeamPalette.danger,
             )

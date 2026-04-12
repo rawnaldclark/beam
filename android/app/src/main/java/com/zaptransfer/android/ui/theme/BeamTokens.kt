@@ -1,6 +1,7 @@
 package com.zaptransfer.android.ui.theme
 
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -269,4 +270,9 @@ object BeamMotion {
 
     /** Exits, dismissals. `cubic-bezier(0.4, 0, 1, 1)`. */
     val easeIn: CubicBezierEasing = CubicBezierEasing(0.4f, 0f, 1f, 1f)
+
+    /** Pre-built tween specs for common Compose animations. */
+    val tweenFast = tween<Float>(durationMillis = durFastMs, easing = easeOut)
+    val tweenBase = tween<Float>(durationMillis = durBaseMs, easing = easeOut)
+    val tweenSlow = tween<Float>(durationMillis = durSlowMs, easing = easeOut)
 }

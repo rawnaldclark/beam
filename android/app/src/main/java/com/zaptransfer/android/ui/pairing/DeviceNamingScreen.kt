@@ -126,7 +126,7 @@ fun DeviceNamingScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Name This Device",
+                        text = "Name this device",
                         style = BeamTextStyle.lgSemibold,
                         color = BeamPalette.textHi,
                     )
@@ -135,7 +135,7 @@ fun DeviceNamingScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = BeamIcons.back,
-                            contentDescription = "Back",
+                            contentDescription = "Go back",
                             tint = BeamPalette.textMid,
                         )
                     }

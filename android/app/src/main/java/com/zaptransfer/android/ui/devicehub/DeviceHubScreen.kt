@@ -2,6 +2,10 @@ package com.zaptransfer.android.ui.devicehub
 
 import android.os.Build
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,6 +50,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,6 +62,7 @@ import com.zaptransfer.android.data.db.entity.PairedDeviceEntity
 import com.zaptransfer.android.data.db.entity.TransferHistoryEntity
 import com.zaptransfer.android.ui.theme.BeamCorner
 import com.zaptransfer.android.ui.theme.BeamIcons
+import com.zaptransfer.android.ui.theme.BeamMotion
 import com.zaptransfer.android.ui.theme.BeamPalette
 import com.zaptransfer.android.ui.theme.BeamRow
 import com.zaptransfer.android.ui.theme.BeamSpace
@@ -189,15 +196,31 @@ fun DeviceHubScreen(
                     // ── Zone 2: Hero Card ──────────────────────────────────────
                     if (heroDevice != null) {
                         item(key = "hero") {
-                            HeroCard(
-                                device = heroDevice,
-                                onPickFile = { onSendFile(heroDevice.entity.deviceId) },
-                                onSendClipboard = { onSendText(heroDevice.entity.deviceId) },
-                                modifier = Modifier.padding(
-                                    horizontal = BeamSpace.s4,
-                                    vertical = BeamSpace.s3,
+                            AnimatedVisibility(
+                                visible = true,
+                                enter = fadeIn(
+                                    animationSpec = tween(
+                                        BeamMotion.durBaseMs,
+                                        easing = BeamMotion.easeOut,
+                                    ),
+                                ) + slideInVertically(
+                                    initialOffsetY = { 8 },
+                                    animationSpec = tween(
+                                        BeamMotion.durBaseMs,
+                                        easing = BeamMotion.easeOut,
+                                    ),
                                 ),
-                            )
+                            ) {
+                                HeroCard(
+                                    device = heroDevice,
+                                    onPickFile = { onSendFile(heroDevice.entity.deviceId) },
+                                    onSendClipboard = { onSendText(heroDevice.entity.deviceId) },
+                                    modifier = Modifier.padding(
+                                        horizontal = BeamSpace.s4,
+                                        vertical = BeamSpace.s3,
+                                    ),
+                                )
+                            }
                         }
                     }
 
@@ -232,6 +255,7 @@ fun DeviceHubScreen(
                                     }
                                 },
                                 onLongClick = { /* retarget hero — future feature */ },
+                                modifier = Modifier.animateItemPlacement(),
                             )
                         }
                     }
@@ -250,7 +274,10 @@ fun DeviceHubScreen(
                             items = activityItems,
                             key = { it.id },
                         ) { item ->
-                            ActivityRow(item = item)
+                            ActivityRow(
+                                item = item,
+                                modifier = Modifier.animateItemPlacement(),
+                            )
                         }
                     }
                 }
@@ -385,6 +412,7 @@ private fun HeroCard(
         // Verb row 1: "Tap to pick file".
         HeroVerbRow(
             label = "Tap to pick file",
+            accessibilityLabel = "Send file to ${device.entity.name}",
             enabled = isOnline,
             onClick = onPickFile,
         )
@@ -395,6 +423,7 @@ private fun HeroCard(
         // Verb row 2: "Send clipboard".
         HeroVerbRow(
             label = "Send clipboard",
+            accessibilityLabel = "Send clipboard to ${device.entity.name}",
             enabled = isOnline,
             onClick = onSendClipboard,
         )
@@ -402,22 +431,25 @@ private fun HeroCard(
 }
 
 /**
- * A single 40dp verb row inside the [HeroCard].
+ * A single verb row inside the [HeroCard] with a 48dp minimum touch target.
  *
- * @param label   Display text for the action.
- * @param enabled Whether the row is interactive (online) or disabled (offline).
- * @param onClick Callback on tap.
+ * @param label              Display text for the action.
+ * @param accessibilityLabel Semantic label announced by TalkBack.
+ * @param enabled            Whether the row is interactive (online) or disabled (offline).
+ * @param onClick            Callback on tap.
  */
 @Composable
 private fun HeroVerbRow(
     label: String,
+    accessibilityLabel: String,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .height(48.dp)
+            .semantics { contentDescription = accessibilityLabel }
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -545,7 +577,7 @@ private fun DeviceRow(
         // Device type icon (24dp).
         Icon(
             imageVector = platformIcon(device.entity),
-            contentDescription = device.entity.platform,
+            contentDescription = deviceTypeLabel(device.entity.icon),
             tint = BeamPalette.textHi,
             modifier = Modifier.size(24.dp),
         )
@@ -879,6 +911,20 @@ private fun connectionTypeLabel(platform: String): String = when (platform) {
     "chrome_extension" -> "Browser Extension"
     "android" -> "Android"
     else -> platform.replaceFirstChar { it.uppercase() }
+}
+
+/**
+ * Returns a human-readable accessibility label for a device type icon token.
+ *
+ * @param iconToken The icon token stored in [PairedDeviceEntity.icon], e.g. "LAPTOP".
+ * @return Display string such as "Laptop", "Desktop", "Phone", or "Tablet".
+ */
+private fun deviceTypeLabel(iconToken: String?): String = when (iconToken?.lowercase()) {
+    "laptop" -> "Laptop"
+    "desktop" -> "Desktop"
+    "phone" -> "Phone"
+    "tablet" -> "Tablet"
+    else -> "Device"
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────────────

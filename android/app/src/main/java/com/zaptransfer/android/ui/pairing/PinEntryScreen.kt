@@ -93,7 +93,7 @@ fun PinEntryScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Enter Pairing PIN",
+                        text = "Enter the 8-digit PIN",
                         style = BeamTextStyle.lgSemibold,
                         color = BeamPalette.textHi,
                     )
@@ -102,7 +102,7 @@ fun PinEntryScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = BeamIcons.back,
-                            contentDescription = "Back",
+                            contentDescription = "Go back",
                             tint = BeamPalette.textMid,
                         )
                     }

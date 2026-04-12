@@ -160,7 +160,7 @@ fun QrScannerScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = BeamIcons.back,
-                            contentDescription = "Back",
+                            contentDescription = "Go back",
                             tint = BeamPalette.textMid,
                         )
                     }

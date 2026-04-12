@@ -94,7 +94,7 @@ fun SasVerificationScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Verify Connection",
+                        text = "Verify connection",
                         style = BeamTextStyle.lgSemibold,
                         color = BeamPalette.textHi,
                     )
