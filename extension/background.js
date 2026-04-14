@@ -72,8 +72,39 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 // Auto-start on SW initialization (fires every time SW wakes up)
+ensureOffscreen(); // boot the offscreen doc so it opens the keepalive port
 autoStartRelayIfPaired();
 rebuildContextMenusFromStorage();
+
+// ---------------------------------------------------------------------------
+// Service Worker keepalive — persistent port from offscreen document
+// ---------------------------------------------------------------------------
+//
+// The offscreen document opens a chrome.runtime.connect() port named
+// "beam-keepalive". As long as this port is open, Chrome will NOT
+// terminate the service worker — even if no other events fire for minutes.
+// This is the documented MV3 pattern for long-lived service workers.
+//
+// The offscreen doc also sends periodic pings over the port (every 25s)
+// as belt-and-suspenders. If the offscreen doc dies, the port disconnects
+// and the alarm-based keepalive recreates the offscreen doc, which
+// re-opens the port on boot.
+//
+// Without this, Chrome MV3 terminates the SW after ~30s–5min of perceived
+// inactivity, forcibly closing the relay WebSocket (code 1005), which
+// causes both devices to show offline until the next alarm-driven wake.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'beam-keepalive') return;
+  console.log('[Beam SW] keepalive port connected from offscreen');
+  port.onMessage.addListener(() => {
+    // No-op — the message event itself resets the SW idle timer.
+  });
+  port.onDisconnect.addListener(() => {
+    console.warn('[Beam SW] keepalive port disconnected — offscreen doc may have died');
+    // The alarm will recreate the offscreen doc on its next tick,
+    // which will re-open the port. No action needed here.
+  });
+});
 
 // Rebuild context menus whenever paired devices change (after pairing, unpair, etc.)
 chrome.storage.onChanged.addListener((changes, area) => {

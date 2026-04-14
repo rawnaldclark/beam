@@ -1031,3 +1031,68 @@ async function _setStorageViaSW(data) {
 // data, and KEEPALIVE_PING — none of which need their own relay socket.
 const _bootPromise = startup()
   .catch(err => console.error('[Beam] Boot failed:', err));
+
+// ---------------------------------------------------------------------------
+// Service Worker keepalive via persistent port connection
+// ---------------------------------------------------------------------------
+//
+// Chrome MV3 terminates service workers after ~30 seconds of inactivity,
+// and has known edge cases where even active WebSocket ping/pong doesn't
+// prevent termination after ~5 minutes. When the SW is terminated, the
+// relay WebSocket is forcibly closed (1005), presence is lost, and the
+// user sees both devices go offline until the next alarm wakes the SW.
+//
+// Fix: the offscreen document (which persists independently of the SW)
+// opens a `chrome.runtime.connect()` port to the SW. Chrome's documented
+// behavior is: "The service worker stays active while a port is open."
+// This port acts as a permanent event source that prevents termination.
+//
+// The offscreen doc also sends a ping over the port every 25 seconds as
+// belt-and-suspenders — each message is an additional event that resets
+// the SW's idle timer.
+//
+// If the SW somehow terminates anyway (crash, update), the port's
+// onDisconnect fires here. We wait 2 seconds (for the alarm to
+// potentially re-create us) and then attempt to reconnect the port.
+// If the SW is dead, chrome.runtime.connect() triggers SW wake-up.
+
+let _keepalivePort = null;
+let _keepaliveTimer = null;
+
+function connectKeepalivePort() {
+  try {
+    _keepalivePort = chrome.runtime.connect({ name: 'beam-keepalive' });
+
+    _keepalivePort.onDisconnect.addListener(() => {
+      console.log('[Beam offscreen] keepalive port disconnected — reconnecting in 2s');
+      _keepalivePort = null;
+      if (_keepaliveTimer) { clearInterval(_keepaliveTimer); _keepaliveTimer = null; }
+      // Reconnect after a short delay. chrome.runtime.connect() will wake
+      // the SW if it was terminated, re-establishing the keepalive.
+      setTimeout(connectKeepalivePort, 2000);
+    });
+
+    // Periodic ping over the port. Each message is an event that resets
+    // the SW's 30-second idle timer, even if the port itself somehow
+    // isn't sufficient (belt-and-suspenders).
+    if (_keepaliveTimer) clearInterval(_keepaliveTimer);
+    _keepaliveTimer = setInterval(() => {
+      try {
+        _keepalivePort?.postMessage({ type: 'keepalive-ping' });
+      } catch {
+        // Port may have closed between the interval check and the send.
+      }
+    }, 25000);
+
+    console.log('[Beam offscreen] keepalive port connected');
+  } catch (err) {
+    console.warn('[Beam offscreen] keepalive port connect failed:', err);
+    // Retry in 5 seconds.
+    setTimeout(connectKeepalivePort, 5000);
+  }
+}
+
+// Connect the keepalive port immediately on offscreen doc boot.
+// This runs even before startup() resolves — the port needs no
+// device keys or storage access.
+connectKeepalivePort();
