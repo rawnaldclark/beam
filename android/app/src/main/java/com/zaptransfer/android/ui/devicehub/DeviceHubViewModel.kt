@@ -277,6 +277,37 @@ class DeviceHubViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Re-register rendezvous with the relay to trigger a fresh presence
+     * exchange. Called from the screen composable on every Activity resume
+     * (via LifecycleResumeEffect) — not just on ViewModel init.
+     *
+     * This is the "refresh on focus" pattern: instead of trusting that
+     * the persistent push chain (WS heartbeat → server presence → UI
+     * update) delivered accurate state while the app was backgrounded,
+     * we actively poke the server for fresh peer-online events every time
+     * the user looks at the screen. Cheap (one JSON message) and makes
+     * presence self-healing regardless of what happened during idle.
+     */
+    fun refreshPresence() {
+        viewModelScope.launch {
+            try {
+                val devices = deviceRepo.observePairedDevices().first()
+                if (devices.isNotEmpty()) {
+                    // Ensure WS is alive — connect() is re-entrant and cycles
+                    // a dead socket if needed.
+                    signalingClient.connect()
+                    // Re-register to trigger server peer-online re-emission.
+                    val rendezvousIds = devices.map { it.deviceId }
+                    signalingClient.registerRendezvous(rendezvousIds)
+                    Log.d(TAG, "refreshPresence: re-registered rendezvous $rendezvousIds")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "refreshPresence failed: ${e.message}")
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         signalingClient.removeListener(relayListener)

@@ -125,6 +125,7 @@ export class Presence {
     // their WebSocket closes (complements the silence checker for immediate cleanup).
     if (gateway && typeof gateway.on === 'function') {
       gateway.on('disconnect', (deviceId) => {
+        console.log(`[presence] disconnect event for ${deviceId}, registered=${this._devices.has(deviceId)}`);
         if (this._devices.has(deviceId)) {
           this.unregister(deviceId);
         }
@@ -170,6 +171,7 @@ export class Presence {
 
       if (sameIds && existing) {
         // Smooth reconnect: bump lastSeen and quietly return.
+        console.log(`[presence] register ${deviceId}: grace-cancel smooth reconnect (same IDs)`);
         existing.lastSeen = Date.now();
         return;
       }
@@ -232,6 +234,7 @@ export class Presence {
     }
 
     // --- First-time registration ---
+    console.log(`[presence] register ${deviceId}: first-time, rendezvous=[${rendezvousIds}]`);
 
     // Record device state with a fresh lastSeen timestamp
     this._devices.set(deviceId, {
@@ -242,6 +245,7 @@ export class Presence {
     // Collect the union of all peers already present on the new rendezvous IDs
     // (before we add the registering device to the sets, so we don't self-notify).
     const existingPeers = this._collectPeers(deviceId, rendezvousIds);
+    console.log(`[presence] register ${deviceId}: found ${existingPeers.size} existing peer(s): [${[...existingPeers]}]`);
 
     // Add device to each rendezvous set
     for (const rvId of rendezvousIds) {

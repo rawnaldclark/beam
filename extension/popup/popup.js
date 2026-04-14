@@ -182,16 +182,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   listenForStorageChanges();
   startKeepalive();
 
-  // Retry device load after a short delay to catch the cold-start timing
-  // race: on browser restart or extension reload, the SW may still be
-  // connecting to the relay when the popup first renders. The initial
-  // loadDevices() reads empty devicePresence from session storage and
-  // shows all devices offline. By the time this retry fires, the SW has
-  // usually completed auth + received peer-online + written to session
-  // storage, so the second loadDevices() picks up the correct state.
+  // ── Refresh-on-focus: actively request fresh presence on every popup open ──
   //
-  // The storage.onChanged listener handles updates AFTER this window,
-  // but this retry covers the gap between popup-open and listener-ready.
+  // Instead of trusting that the persistent push chain (WS heartbeat →
+  // server presence → storage update) delivered accurate state while the
+  // popup was closed, we ask the SW to re-register its rendezvous with
+  // the relay. This triggers the server to re-emit peer-online for every
+  // peer that's currently connected, giving us a fresh presence snapshot
+  // within ~1-2 seconds regardless of what happened during idle.
+  //
+  // This makes presence self-healing: even if the WS died and reconnected,
+  // or the server restarted, or a push event was missed, the user sees
+  // accurate state every time they open the popup.
+  try {
+    await chrome.runtime.sendMessage({ type: 'REFRESH_PRESENCE' });
+  } catch {
+    // SW not ready yet — the retries below will catch it.
+  }
   setTimeout(loadDevices, 1500);
   setTimeout(loadDevices, 4000);
 });

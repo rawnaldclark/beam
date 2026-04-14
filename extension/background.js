@@ -210,6 +210,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         .catch(err  => sendResponse({ type: MSG.IMAGE_FETCHED, payload: { error: err.message } }));
       return true; // async sendResponse
 
+    // ── Refresh presence: popup asks SW to re-register rendezvous ────────────
+    // This triggers the server to re-emit peer-online for all connected peers,
+    // giving the popup a fresh presence snapshot regardless of what happened
+    // during idle. Fires on every popup open — cheap and self-healing.
+    case 'REFRESH_PRESENCE': {
+      if (sendPairingMessage) {
+        try {
+          // Re-send register-rendezvous to poke the server's presence module.
+          chrome.storage.local.get('deviceId').then(({ deviceId }) => {
+            if (deviceId) {
+              sendPairingMessage({
+                type: 'register-rendezvous',
+                rendezvousIds: [deviceId],
+              });
+            }
+          });
+        } catch { /* WS may not be open — non-fatal */ }
+      }
+      sendResponse({ ok: true });
+      break;
+    }
+
     // ── Pairing relay (runs in SW so it survives popup close) ────────────────
     case 'START_PAIRING_LISTENER': {
       console.log('[Beam SW] START_PAIRING_LISTENER received, deviceId:', msg.payload?.deviceId);

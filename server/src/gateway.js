@@ -430,6 +430,7 @@ export class Gateway extends EventEmitter {
     }
 
     // --- Auth success ---
+    console.log(`[gateway] auth-ok: ${deviceId} (existing=${this.devices.has(deviceId)})`);
     this.pendingChallenges.delete(ws);
     // Release the per-IP unauthenticated slot now that this socket is a
     // real authenticated peer. `_releaseUnauthSlot` is idempotent: calling
