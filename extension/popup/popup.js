@@ -1016,6 +1016,21 @@ function setupEventListeners() {
   // Empty state: Pair first device button
   document.getElementById('btn-pair-first')?.addEventListener('click', showPairingView);
 
+  // Header: Reconnect — tears down WS and opens a fresh connection
+  document.getElementById('btn-reconnect')?.addEventListener('click', async () => {
+    const dot = document.getElementById('relay-status-dot');
+    if (dot) dot.classList.add('disconnected');
+    try {
+      await chrome.runtime.sendMessage({ type: 'FORCE_RECONNECT' });
+      if (dot) dot.classList.remove('disconnected');
+      await loadDevices();
+      // Give the server a moment to fire peer-online
+      setTimeout(loadDevices, 2000);
+    } catch {
+      if (dot) dot.classList.remove('disconnected');
+    }
+  });
+
   // Header: Settings — open settings view
   document.getElementById('btn-settings')?.addEventListener('click', showSettingsView);
 

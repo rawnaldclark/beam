@@ -210,6 +210,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         .catch(err  => sendResponse({ type: MSG.IMAGE_FETCHED, payload: { error: err.message } }));
       return true; // async sendResponse
 
+    // ── Force reconnect: tears down the current WS and opens a fresh one ────
+    // This is the programmatic equivalent of "reload the extension" — it
+    // guarantees a fresh TCP connection regardless of zombie WS state. Called
+    // from the popup's reconnect button or from any "connection seems broken"
+    // recovery path.
+    case 'FORCE_RECONNECT': {
+      console.log('[Beam SW] FORCE_RECONNECT requested');
+      stopPairingListener();
+      autoStartRelayIfPaired()
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err.message }));
+      return true; // async
+    }
+
     // ── Refresh presence: popup asks SW to re-register rendezvous ────────────
     // This triggers the server to re-emit peer-online for all connected peers,
     // giving the popup a fresh presence snapshot regardless of what happened

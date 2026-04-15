@@ -41,6 +41,22 @@ let pairingWs = null;
 let pairingDeviceId = null;
 
 /**
+ * Timestamp of the last pong received from the relay server. Updated every
+ * time we receive a `{ type: "pong" }` response to our heartbeat ping.
+ *
+ * The heartbeat interval checks this value: if more than
+ * ZOMBIE_DETECTION_MS has elapsed since the last pong, the WebSocket is
+ * declared a zombie (readyState reports OPEN but the TCP connection is
+ * dead) and is force-closed. Auto-reconnect fires from the onclose handler.
+ *
+ * This is the Chrome equivalent of OkHttp's pingInterval — the browser
+ * WebSocket API has no built-in dead-connection detection, so we must
+ * implement it at the application layer.
+ */
+let _lastPongAt = Date.now();
+const ZOMBIE_DETECTION_MS = 60_000; // 2 missed ping/pong cycles (25s each) + margin
+
+/**
  * Start listening for a pairing request from an Android device.
  *
  * Opens a WebSocket to the relay server, authenticates using Ed25519
@@ -134,7 +150,14 @@ export async function startPairingListener(deviceId, ed25519Sk, ed25519Pk) {
           reject(new Error('Auth signing failed: ' + err.message));
         }
       }
+      else if (msg.type === 'pong') {
+        // Heartbeat pong received — update the zombie detection timestamp.
+        // If this stops arriving, the heartbeat interval will force-close
+        // the WS after ZOMBIE_DETECTION_MS.
+        _lastPongAt = Date.now();
+      }
       else if (msg.type === 'auth-ok') {
+        _lastPongAt = Date.now(); // reset zombie timer on fresh auth
         console.log('[Beam SW] Pairing relay authenticated as', deviceId);
         // Register our deviceId as rendezvous so the relay routes Android's message.
         pairingWs.send(JSON.stringify({
@@ -256,11 +279,31 @@ let _lastEd25519Pk = null;
 /** @type {number|null} */
 let _heartbeatTimer = null;
 
-/** Start sending pings every 25 seconds to keep the connection alive. */
+/**
+ * Start the heartbeat: sends JSON `ping` every 25 seconds AND checks for
+ * zombie WebSockets by verifying that `pong` responses are arriving.
+ *
+ * If more than ZOMBIE_DETECTION_MS passes without a pong, the WS is
+ * declared dead and force-closed. The onclose handler triggers
+ * auto-reconnect, which opens a fresh TCP connection and re-authenticates.
+ *
+ * This is the application-level equivalent of OkHttp's `pingInterval` —
+ * Chrome's browser WebSocket API has no built-in dead-connection
+ * detection, so without this check a zombie WS can sit in
+ * `readyState === OPEN` for hours while sends silently go to /dev/null.
+ */
 function _startHeartbeat() {
   if (_heartbeatTimer) clearInterval(_heartbeatTimer);
+  _lastPongAt = Date.now(); // reset on fresh connection
   _heartbeatTimer = setInterval(() => {
     if (pairingWs?.readyState === WebSocket.OPEN) {
+      // Check zombie: if no pong received in ZOMBIE_DETECTION_MS, force-close.
+      if (Date.now() - _lastPongAt > ZOMBIE_DETECTION_MS) {
+        console.warn('[Beam SW] WebSocket zombie detected (no pong for',
+          Math.round((Date.now() - _lastPongAt) / 1000), 's) — force-closing');
+        pairingWs.close(4000, 'zombie detected');
+        return; // onclose will trigger auto-reconnect
+      }
       pairingWs.send(JSON.stringify({ type: 'ping' }));
     }
   }, 25000);
